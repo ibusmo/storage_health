@@ -1,0 +1,2974 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="application-name" content="Storage Health" />
+  <meta name="apple-mobile-web-app-title" content="Storage Health" />
+  <title>Storage Health</title>
+  <link rel="stylesheet" href="/static/theme.css?v=51" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" crossorigin="anonymous"></script>
+</head>
+<body>
+<div class="layout-app">
+<div class="main-scroll">
+<div class="container">
+  <header>
+    <div class="header-left">
+      <h1>Storage Health</h1>
+      <div id="meta" class="meta">This page is your live report (print or export). SD/USB · SQLite · quick test measures integrity + rough read/write speed; full destructive F3 test: CLI <code>storage-health full</code>.</div>
+      <span class="server-meta" id="serverMeta" title="API process"></span>
+      <p id="staleServerWarn" class="stale-server-warn hidden" role="status"></p>
+    </div>
+    <div class="header-actions">
+      <div class="header-btn-group">
+        <button type="button" class="btn-secondary" id="btnDemoMode" title="Mask sensitive values for screenshots">Demo mode: Off</button>
+        <button type="button" class="btn-secondary" id="btnPrint">Print / PDF</button>
+        <button type="button" class="btn-secondary" id="btnRefresh">↺ Refresh</button>
+        <button type="button" class="btn-secondary" id="btnStatic">Export offline HTML</button>
+      </div>
+    </div>
+  </header>
+
+  <div class="page-toast" aria-live="polite" aria-atomic="true" aria-label="Status and copy feedback">
+    <div class="msg" id="msg"></div>
+  </div>
+
+  <section class="action-panel" aria-label="Removable drives">
+    <h2>Removable drives</h2>
+    <div class="table-wrap table-scroll">
+      <table id="tableCandidates">
+        <thead>
+          <tr>
+            <th scope="col" title="Order in current sort">#</th>
+            <th class="th-sortable" data-sort-key="mount_point" scope="col">Mount<span class="sort-ind" aria-hidden="true"></span></th>
+            <th class="th-sortable" data-sort-key="disk_id" scope="col">OS disk<span class="sort-ind" aria-hidden="true"></span></th>
+            <th class="th-sortable" data-sort-key="id" scope="col">ID<span class="sort-ind" aria-hidden="true"></span></th>
+            <th class="th-sortable" data-sort-key="pen" scope="col">Name<span class="sort-ind" aria-hidden="true"></span></th>
+            <th class="th-sortable" data-sort-key="user_brand" scope="col">Brand<span class="sort-ind" aria-hidden="true"></span></th>
+            <th class="th-sortable" data-sort-key="user_series" scope="col">Series<span class="sort-ind" aria-hidden="true"></span></th>
+            <th class="th-sortable" data-sort-key="filesystem" scope="col">FS<span class="sort-ind" aria-hidden="true"></span></th>
+            <th class="th-sortable" data-sort-key="size" scope="col">Size<span class="sort-ind" aria-hidden="true"></span></th>
+            <th scope="col">Rate</th>
+            <th class="th-sortable" data-sort-key="media_type" scope="col">Type<span class="sort-ind" aria-hidden="true"></span></th>
+            <th class="th-sortable" data-sort-key="user_notes" scope="col">Notes<span class="sort-ind" aria-hidden="true"></span></th>
+            <th class="th-sortable" data-sort-key="status" scope="col">Status<span class="sort-ind" aria-hidden="true"></span></th>
+            <th class="td-actions th-sortable" data-sort-key="actions_col" scope="col">Actions<span class="sort-ind" aria-hidden="true"></span></th>
+          </tr>
+        </thead>
+        <tbody id="candBody"></tbody>
+      </table>
+    </div>
+    <p class="empty-msg hidden" id="candEmpty">No removable volumes detected.</p>
+    <p class="db-hint"><strong>Click</strong> a value to copy it, or click row padding to open details. Use <strong>Edit</strong> to save name/brand/series/notes. <strong>Use</strong> fills the Test mount path. On <strong>macOS</strong>, <strong>Eject</strong> runs <code>diskutil eject</code> for that device. <strong>ID</strong> is from device identity (currently UUID-first); reformatting can create a new ID.</p>
+  </section>
+
+  <section class="action-panel" aria-label="Test">
+    <h2>Test</h2>
+    <div class="form-row quick-groups">
+      <div class="quick-group">
+        <p class="quick-group-title">Target</p>
+        <label>Mount path
+          <input type="text" id="mount" data-suggest="mount" placeholder="/Volumes/YOUR_SD" autocomplete="off" />
+        </label>
+        <label>Run notes
+          <input type="text" id="notes" placeholder="sticker id (this run only)" autocomplete="off" />
+        </label>
+        <p class="quick-group-hint">Choose the mounted volume and optional run note/sticker id.</p>
+      </div>
+      <div class="quick-group">
+        <p class="quick-group-title">Quick test</p>
+        <label>Sample size
+          <select id="sampleMiB" aria-label="Quick test temp file size in MiB">
+            <option value="4" selected>4 MiB — fast spot check</option>
+            <option value="16">16 MiB</option>
+            <option value="32">32 MiB</option>
+            <option value="64">64 MiB</option>
+            <option value="128">128 MiB</option>
+            <option value="256">256 MiB</option>
+            <option value="512">512 MiB — longest check (needs ~512&nbsp;MiB free RAM)</option>
+          </select>
+        </label>
+        <button type="button" class="btn-secondary" id="btnQuick">Run quick test</button>
+        <p class="quick-group-hint">Writes a temp file, verifies hash, and reports write/read MiB/s.</p>
+      </div>
+      <div class="quick-group">
+        <p class="quick-group-title">Stress test</p>
+        <label>Profile
+          <select id="stressProfile" aria-label="Camera recording profile">
+            <option value="">None (no threshold)</option>
+            <option value="hd">HD</option>
+            <option value="fhd" selected>Full HD</option>
+            <option value="2k">2K</option>
+            <option value="4k">4K</option>
+            <option value="8k">8K</option>
+          </select>
+        </label>
+        <label>Stress min
+          <select id="stressMin" aria-label="Camera-style stress duration in minutes">
+            <option value="1" selected>1 min</option>
+            <option value="5">5 min</option>
+            <option value="10">10 min</option>
+            <option value="20">20 min</option>
+            <option value="30">30 min</option>
+            <option value="60">60 min</option>
+          </select>
+        </label>
+        <button type="button" class="btn-secondary btn-tone-info" id="btnCamStress">Run cam stress</button>
+        <p class="quick-group-hint">Sustained write/read with periodic readback checks; profile enforces minimum sustained write speed.</p>
+      </div>
+      <div class="quick-group">
+        <p class="quick-group-title">Verify / repair</p>
+        <button type="button" class="btn-secondary btn-tone-info hidden" id="btnVerifyVol">Verify only (read-only)</button>
+        <button type="button" class="btn-secondary btn-tone-caution hidden" id="btnRepairVol">First Aid repair</button>
+        <p class="quick-group-hint">macOS only: <code>diskutil verifyVolume</code> checks filesystem; <code>diskutil repairVolume</code> attempts repair (prefer backups).</p>
+      </div>
+    </div>
+    <p class="db-hint">For destructive full-card bad-blocks sweep use CLI <code>storage-health full --i-know</code>. Export offline HTML is optional for sharing without the server.</p>
+    <div class="run-status" id="runStatus" aria-live="polite"></div>
+  </section>
+
+  <div class="summary-row" id="summaryRow">
+    <span class="pill">pass: <strong id="cPass">0</strong></span>
+    <span class="pill">fail: <strong id="cFail">0</strong></span>
+    <span class="pill">error: <strong id="cErr">0</strong></span>
+  </div>
+
+  <section class="chart-report" aria-label="Report charts">
+    <h2 class="chart-report-title">Report charts</h2>
+    <p class="chart-report-hint db-hint">Counts include every run in history below. Throughput chart uses only <strong>passing</strong> tests with stored write/read benchmark metrics (quick test and cam stress; latest points on the right). <strong>Write</strong> and <strong>read</strong> use separate Y scales; hover points for values and use the legend to show or hide a series.</p>
+    <div class="chart-grid">
+      <div class="chart-cell">
+        <p class="chart-caption">Results</p>
+        <canvas id="chartResults" aria-label="Pass fail error counts"></canvas>
+        <p class="chart-empty hidden" id="chartResultsEmpty">No runs to chart yet.</p>
+      </div>
+      <div class="chart-cell">
+        <p class="chart-caption">Quick test throughput</p>
+        <canvas id="chartSpeeds" aria-label="Write and read MiB per second over time"></canvas>
+        <p class="chart-empty hidden" id="chartSpeedsEmpty">No quick-test speed samples yet.</p>
+      </div>
+    </div>
+  </section>
+
+  <div class="toolbar">
+    <input type="search" id="q" placeholder="Filter runs…" />
+    <span class="device-count" id="shown"></span>
+  </div>
+  <div class="runs-tabs-wrap">
+    <div class="segmented-tabs" role="tablist" aria-label="Run history layout">
+      <button type="button" class="seg-tab" role="tab" id="tabRunsAll" aria-controls="runsViewAll" aria-selected="true">All runs</button>
+      <button type="button" class="seg-tab" role="tab" id="tabRunsById" aria-controls="runsViewById" aria-selected="false">By ID</button>
+    </div>
+  </div>
+  <p class="db-hint runs-hint">Like the LAN analyzer: <strong>click</strong> copyable text to copy. <strong>Click</strong> elsewhere on the row (e.g. empty cell area) to open the inspector. <kbd>⌘</kbd><kbd>C</kbd> / <kbd>Ctrl</kbd>+<kbd>C</kbd> = selected run as TSV. Inspector: values copy the same way. <kbd>Esc</kbd> closes dialogs. <strong>By ID</strong> groups history by storage fingerprint: <strong>OK to use?</strong> is <strong>Yes</strong> only when the <em>latest</em> run for that ID is a pass (any mode).</p>
+
+  <div id="runsViewAll" class="runs-view-panel" role="tabpanel" aria-labelledby="tabRunsAll">
+    <div class="table-wrap table-scroll">
+      <table id="tableRuns">
+        <thead>
+          <tr>
+            <th class="th-sortable" data-sort-key="finished_at" scope="col">Finished<span class="sort-ind" aria-hidden="true"></span></th>
+            <th class="th-sortable" data-sort-key="test_mode" scope="col">Mode<span class="sort-ind" aria-hidden="true"></span></th>
+            <th class="th-sortable" data-sort-key="result" scope="col">Pass<span class="sort-ind" aria-hidden="true"></span></th>
+            <th class="th-sortable" data-sort-key="disk_id" scope="col">OS disk<span class="sort-ind" aria-hidden="true"></span></th>
+            <th class="th-sortable" data-sort-key="id" scope="col">ID<span class="sort-ind" aria-hidden="true"></span></th>
+            <th class="th-sortable" data-sort-key="pen" scope="col">Name<span class="sort-ind" aria-hidden="true"></span></th>
+            <th class="th-sortable" data-sort-key="brand" scope="col">Brand<span class="sort-ind" aria-hidden="true"></span></th>
+            <th class="th-sortable" data-sort-key="series" scope="col">Series<span class="sort-ind" aria-hidden="true"></span></th>
+            <th class="th-sortable" data-sort-key="filesystem" scope="col">FS<span class="sort-ind" aria-hidden="true"></span></th>
+            <th class="th-sortable" data-sort-key="rate" scope="col">Rate<span class="sort-ind" aria-hidden="true"></span></th>
+            <th class="th-sortable" data-sort-key="size" scope="col">Size<span class="sort-ind" aria-hidden="true"></span></th>
+            <th class="th-sortable" data-sort-key="qb_sample_mib" scope="col">MiB<span class="sort-ind" aria-hidden="true"></span></th>
+            <th class="th-sortable" data-sort-key="qb_write_mib_s" scope="col">W MiB/s<span class="sort-ind" aria-hidden="true"></span></th>
+            <th class="th-sortable" data-sort-key="qb_read_mib_s" scope="col">R MiB/s<span class="sort-ind" aria-hidden="true"></span></th>
+            <th class="td-actions td-run-edit th-sortable" data-sort-key="edit_col" scope="col">Edit<span class="sort-ind" aria-hidden="true"></span></th>
+          </tr>
+        </thead>
+        <tbody id="body"></tbody>
+      </table>
+    </div>
+    <p class="empty-msg hidden" id="empty">No runs yet. Run a quick test above or use the CLI.</p>
+  </div>
+
+  <div id="runsViewById" class="runs-view-panel hidden" role="tabpanel" aria-labelledby="tabRunsById">
+    <div class="table-wrap table-scroll">
+      <table id="tableRunsById">
+        <thead>
+          <tr>
+            <th scope="col">ID</th>
+            <th scope="col">Name</th>
+            <th scope="col">Brand</th>
+            <th scope="col">Series</th>
+            <th scope="col">FS</th>
+            <th scope="col">Rate</th>
+            <th scope="col">Size</th>
+            <th scope="col">OK to use?</th>
+            <th scope="col">Last finished</th>
+            <th scope="col">Last mode</th>
+            <th scope="col">Last result</th>
+            <th scope="col">Runs</th>
+          </tr>
+        </thead>
+        <tbody id="runsByIdBody"></tbody>
+      </table>
+    </div>
+    <p class="empty-msg hidden" id="emptyById">No run history for any ID yet.</p>
+  </div>
+</div>
+</div>
+</div>
+
+<aside id="detailPanel" class="detail-panel hidden" aria-hidden="true" aria-label="Details">
+  <div class="detail-panel-inner">
+    <div class="detail-panel-head">
+      <h2 id="detailPanelTitle" class="detail-panel-title">Details</h2>
+      <button type="button" class="btn-panel-close" id="detailPanelClose" aria-label="Close details panel">✕</button>
+    </div>
+    <div id="detailPanelBody" class="detail-panel-body"></div>
+    <details id="detailRawWrap" class="detail-raw">
+      <summary>Raw JSON</summary>
+      <pre id="detailPanelRaw" class="json-block json-block-tight copy-text-target" data-copy="" title="Click to copy"></pre>
+    </details>
+  </div>
+</aside>
+
+<div id="suggestPanel" class="hidden" role="listbox" aria-label="Suggestions"></div>
+
+<div id="newDevModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="newDevTitle">
+  <div class="modal-panel">
+    <h3 id="newDevTitle">New storage detected</h3>
+    <div class="detail" id="newDevDetail"></div>
+    <div class="modal-actions">
+      <button type="button" class="btn-secondary" id="newDevDismiss">Dismiss</button>
+      <button type="button" class="btn-primary" id="newDevUse">Use this mount</button>
+    </div>
+  </div>
+</div>
+
+<div id="labelEditModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="labelEditTitle">
+  <div class="modal-panel modal-panel-form">
+    <h3 id="labelEditTitle">Edit name on card, brand, series, notes</h3>
+    <p class="modal-meta mono" id="editLabelContext"></p>
+    <input type="hidden" id="editLabelFp" value="" />
+    <div class="modal-form-grid">
+      <label>Name on card (pen)
+        <input type="text" id="editLabelPen" data-suggest="pen" autocomplete="off" />
+      </label>
+      <label>Brand
+        <input type="text" id="editLabelBrand" data-suggest="brand" autocomplete="off" />
+      </label>
+      <label>Series
+        <input type="text" id="editLabelSeries" data-suggest="series" autocomplete="off" />
+      </label>
+      <label>Notes
+        <input type="text" id="editLabelNotes" data-suggest="notes" autocomplete="off" placeholder="Optional notes" />
+      </label>
+    </div>
+    <div class="modal-actions">
+      <button type="button" class="btn-secondary" id="labelEditCancel">Cancel</button>
+      <button type="button" class="btn-primary" id="labelEditSave">Save</button>
+    </div>
+  </div>
+</div>
+
+<div id="repairConfirmModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="repairConfirmTitle">
+  <div class="modal-panel" role="document">
+    <h3 id="repairConfirmTitle">First Aid repair</h3>
+    <p class="detail">
+      Run <strong>Disk Utility</strong> First Aid repair (<code>diskutil repairVolume</code>) on this mount?
+      Same repair path as First Aid when it fixes a volume; it may change filesystem metadata.
+      Use backups; avoid system volumes.
+    </p>
+    <div class="modal-actions">
+      <button type="button" class="btn-secondary" id="repairConfirmCancel">Cancel</button>
+      <button type="button" class="btn-primary btn-confirm-repair" id="repairConfirmOk">Run repair</button>
+    </div>
+  </div>
+</div>
+
+<div id="ejectConfirmModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="ejectConfirmTitle">
+  <div class="modal-panel" role="document">
+    <h3 id="ejectConfirmTitle">Eject disk</h3>
+    <p class="detail"><span class="mono" id="ejectConfirmDevice"></span></p>
+    <p class="detail">Unmount and eject via <code>diskutil eject</code> for this device?</p>
+    <div class="modal-actions">
+      <button type="button" class="btn-secondary" id="ejectConfirmCancel">Cancel</button>
+      <button type="button" class="btn-primary" id="ejectConfirmOk">Eject</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  const msgEl = document.getElementById('msg');
+  let toastGen = 0;
+  let toastHideId = null;
+  function setMsg(text, cls, opts) {
+    if (toastHideId) {
+      clearTimeout(toastHideId);
+      toastHideId = null;
+    }
+    // Only timers passed as opts.autoHideMs hide the toast; omit for in-progress lines (e.g. "Running…").
+    const autoHide = opts && opts.autoHideMs;
+    msgEl.textContent = text || '';
+    msgEl.className = 'msg' + (cls ? ' ' + cls : '');
+    const t = String(text || '').trim();
+    if (!autoHide || !t) return;
+    const my = ++toastGen;
+    toastHideId = setTimeout(() => {
+      toastHideId = null;
+      if (my !== toastGen) return;
+      msgEl.textContent = '';
+      msgEl.className = 'msg';
+    }, autoHide);
+  }
+
+  function clearTextSelection() {
+    const sel = window.getSelection && window.getSelection();
+    if (sel && sel.removeAllRanges) sel.removeAllRanges();
+  }
+
+  function copyPreviewForMsg(text, maxLen) {
+    const n = maxLen == null ? 160 : maxLen;
+    let s = String(text).replace(/\r\n/g, '\n').replace(/\n/g, ' ↲ ');
+    s = s.replace(/\s+/g, ' ').trim();
+    if (s.length > n) return s.slice(0, n) + '…';
+    return s;
+  }
+
+  /** Toast: “Copied: …” (network analyzer style). Full `text` always goes to clipboard (trimmed). */
+  function copyTextWithToast(text, opts) {
+    const t = (text || '').trim();
+    if (!t) return Promise.resolve(false);
+    const maxLen = opts && opts.maxPreviewLen;
+    const preview = copyPreviewForMsg(t, maxLen);
+    const msg = 'Copied: ' + preview;
+    const write = () => {
+      if (navigator.clipboard && window.isSecureContext) {
+        return navigator.clipboard.writeText(t);
+      }
+      return new Promise((resolve, reject) => {
+        const ta = document.createElement('textarea');
+        ta.value = t;
+        ta.setAttribute('readonly', '');
+        ta.style.position = 'fixed';
+        ta.style.left = '-9999px';
+        document.body.appendChild(ta);
+        ta.select();
+        try {
+          if (document.execCommand('copy')) resolve();
+          else reject(new Error('execCommand'));
+        } catch (e) {
+          reject(e);
+        } finally {
+          document.body.removeChild(ta);
+        }
+      });
+    };
+    return write()
+      .then(() => {
+        setMsg(msg, 'ok', { autoHideMs: 2800 });
+        return true;
+      })
+      .catch(() => {
+        setMsg('Copy failed.', 'err', { autoHideMs: 4500 });
+        return false;
+      });
+  }
+
+  /** Same contract as network_analyzer `copyTextToClipboard`: skip empty / em dash; toast `Copied: …` (full text); 2.2s hide. */
+  function copyTextToClipboardLikeAnalyzer(text) {
+    const t = String(text ?? '').trim();
+    if (!t || t === '—') return Promise.resolve(false);
+    const write = () => {
+      if (navigator.clipboard && window.isSecureContext) {
+        return navigator.clipboard.writeText(t);
+      }
+      return new Promise((resolve, reject) => {
+        const ta = document.createElement('textarea');
+        ta.value = t;
+        ta.setAttribute('readonly', '');
+        ta.style.cssText = 'position:fixed;left:-9999px';
+        document.body.appendChild(ta);
+        ta.select();
+        try {
+          if (document.execCommand('copy')) resolve();
+          else reject(new Error('execCommand'));
+        } catch (e) {
+          reject(e);
+        } finally {
+          document.body.removeChild(ta);
+        }
+      });
+    };
+    return write()
+      .then(() => {
+        setMsg('Copied: ' + t, 'ok', { autoHideMs: 2200 });
+        return true;
+      })
+      .catch(() => {
+        setMsg('Copy failed.', 'err', { autoHideMs: 4500 });
+        return false;
+      });
+  }
+
+  /** Resolve clipboard string from a `.copy-text-target` (table, panel, pre, prose). */
+  function textFromCopyTargetEl(el) {
+    if (!el) return '';
+    if (el.matches('input, textarea, select')) {
+      return (el.value != null ? String(el.value) : '').trim();
+    }
+    const dc = el.getAttribute('data-copy');
+    if (dc != null && dc !== '') {
+      return String(dc).trim();
+    }
+    if (el.tagName === 'PRE') {
+      return (el.textContent || '').replace(/\r\n/g, '\n').trim();
+    }
+    if (el.closest('.detail-prose')) {
+      return (el.textContent || '').replace(/\r\n/g, '\n').trim();
+    }
+    return (el.textContent || '').replace(/\s+/g, ' ').trim();
+  }
+
+  /**
+   * Capture phase on tbody (same as network_analyzer `setupCopyOnClick`): copy runs before row bubble handlers,
+   * stopPropagation prevents inspector/other side effects.
+   */
+  function setupTableCopyLikeNetworkAnalyzer() {
+    ['body', 'candBody', 'runsByIdBody'].forEach((id) => {
+      const body = document.getElementById(id);
+      if (!body || body.dataset.naCopyBound) return;
+      body.dataset.naCopyBound = '1';
+      body.addEventListener(
+        'click',
+        (e) => {
+          const el = e.target.closest('.copy-text-target');
+          if (!el || !body.contains(el)) return;
+          if (el.matches('input, textarea, select') && !e.shiftKey) return;
+          e.stopPropagation();
+          e.preventDefault();
+          const text = textFromCopyTargetEl(el);
+          copyTextToClipboardLikeAnalyzer(text).then((ok) => {
+            if (ok) clearTextSelection();
+          });
+        },
+        true
+      );
+    });
+  }
+
+  /** Detail panel + raw JSON pre: capture-phase click → clipboard + toast (no selection flash). */
+  function setupDetailPanelCopyLikeNetworkAnalyzer() {
+    const panel = document.getElementById('detailPanel');
+    if (!panel || panel.dataset.naCopyBound) return;
+    panel.dataset.naCopyBound = '1';
+    panel.addEventListener(
+      'click',
+      (e) => {
+        if (e.target.closest('button, a')) return;
+        if (e.target.closest('summary')) return;
+        const el = e.target.closest('.copy-text-target');
+        if (!el || !panel.contains(el)) return;
+        e.stopPropagation();
+        e.preventDefault();
+        const text = textFromCopyTargetEl(el);
+        copyTextToClipboardLikeAnalyzer(text).then((ok) => {
+          if (ok) clearTextSelection();
+        });
+      },
+      true
+    );
+  }
+
+  /**
+   * Bubble phase: open inspector when clicking the row outside `.copy-text-target` (cell padding / non-value).
+   * Clicks on copy spans are stopped in capture on tbody, so this never fires for copy.
+   */
+  function bindRowClickOpenDetail(tr, onOpen, skipInputClicks) {
+    tr.addEventListener('click', (ev) => {
+      if (ev.target.closest('button, a')) return;
+      if (ev.target.closest('.copy-text-target')) return;
+      if (skipInputClicks && ev.target.closest('input, textarea, select')) return;
+      const td = ev.target.closest('td');
+      if (!td || td.classList.contains('td-actions')) return;
+      onOpen();
+    });
+  }
+
+  const COMMON_BRANDS = [
+    'SanDisk', 'Samsung', 'Kingston', 'Lexar', 'Neo Home', 'Sony', 'Transcend', 'PNY', 'Integral',
+    'Toshiba', 'Kioxia', 'Hiksemi', 'Crucial', 'WD', 'Western Digital', 'ADATA', 'TeamGroup', 'Verbatim',
+  ];
+
+  /** Common card “series” / product lines (endurance, Lexar Canvas, etc.) — autocomplete only. */
+  const COMMON_CARD_SERIES = [
+    'Endurance', 'High Endurance', 'MAX Endurance', 'PRO Endurance',
+    'Canvas', 'Canvas Select', 'Canvas React', 'Canvas Go', 'Canvas Plus',
+    'Extreme', 'Extreme Pro', 'Extreme PLUS',
+    'Ultra', 'Ultra PLUS',
+    'EVO Plus', 'EVO Select', 'EVO', 'PRO Plus',
+    'Elite-X', 'Professional', 'Gold', 'Platinum',
+    'Tough', 'Power', 'High Performance', 'Gaming Plus',
+    'Exceria', 'Exceria Pro', 'Exceria High Endurance', 'Exceria Essential',
+    'T-Create', 'Ultimate', 'UltimaPro', 'Turbo', 'ProClass',
+    'Neo Home', 'NEO HOME',
+    'NEO', 'NEO LUX', 'NEO PLUS', 'FUTURE', 'CITY GO',
+  ];
+
+  /**
+   * Typical lines per brand — used to order suggestions and to mark “exclusive” names
+   * (e.g. EVO → Samsung) so they are hidden when another brand is selected.
+   */
+  const SERIES_BRAND_HINTS = {
+    sandisk: ['Ultra', 'Ultra PLUS', 'Extreme', 'Extreme Pro', 'Extreme PLUS', 'High Endurance', 'MAX Endurance', 'PRO Endurance', 'Endurance'],
+    samsung: ['PRO Plus', 'EVO Plus', 'EVO Select', 'EVO', 'PRO Endurance'],
+    lexar: ['Canvas', 'Canvas Select', 'Canvas React', 'Canvas Go', 'Canvas Plus', 'Professional', 'Gold', 'Platinum'],
+    kingston: ['Canvas Select', 'Canvas Go', 'Canvas React', 'Endurance', 'High Endurance'],
+    sony: ['Tough', 'Professional'],
+    transcend: ['High Endurance', 'Premium', 'Ultimate'],
+    pny: ['Elite-X', 'PRO Elite', 'Turbo'],
+    integral: ['High Performance', 'Premium', 'UltimaPro'],
+    adata: ['Premier', 'High Endurance', 'Ultimate'],
+    verbatim: ['Pro', 'Premium', 'ProClass'],
+    crucial: [],
+    wd: [],
+    'western digital': [],
+    toshiba: ['Exceria', 'Exceria Pro', 'Exceria High Endurance'],
+    kioxia: ['Exceria', 'Exceria Pro', 'Exceria High Endurance', 'Exceria Essential'],
+    /** Hiksemi “family memory card” retail names only. */
+    hiksemi: [
+      'NEO',
+      'NEO HOME',
+      'Neo Home',
+      'NEO LUX',
+      'NEO PLUS',
+      'FUTURE',
+      'CITY GO',
+      'High Endurance',
+      'Elite',
+      'Pro',
+    ],
+    'neo home': ['Neo Home', 'NEO HOME'],
+    teamgroup: ['T-Create', 'Elite'],
+  };
+
+  /** lower(series) → brand key if that string appears in exactly one brand hint list. */
+  const SERIES_EXCLUSIVE_LOWER = (function () {
+    const tally = new Map();
+    for (const [bk, arr] of Object.entries(SERIES_BRAND_HINTS)) {
+      if (!arr || !arr.length) continue;
+      for (const s of arr) {
+        const L = String(s || '').trim().toLowerCase();
+        if (!L) continue;
+        if (!tally.has(L)) tally.set(L, new Set());
+        tally.get(L).add(bk);
+      }
+    }
+    const out = new Map();
+    for (const [L, brands] of tally) {
+      if (brands.size === 1) {
+        const [only] = brands;
+        out.set(L, only);
+      }
+    }
+    return out;
+  })();
+
+  function seriesBrandHintKey(brandRaw) {
+    const b = String(brandRaw || '').trim().toLowerCase();
+    if (!b) return '';
+    if (SERIES_BRAND_HINTS[b]) return b;
+    for (const k of Object.keys(SERIES_BRAND_HINTS)) {
+      if (b === k || b.includes(k) || k.includes(b)) return k;
+    }
+    return '';
+  }
+
+  /** Drop series that belong to another brand only (e.g. EVO for Kingston). */
+  function filterSeriesItemsForBrand(items, hintKey) {
+    if (!hintKey || !items.length) return items;
+    return items.filter((raw) => {
+      const L = String(raw).trim().toLowerCase();
+      const owner = SERIES_EXCLUSIVE_LOWER.get(L);
+      if (owner == null) return true;
+      return owner === hintKey;
+    });
+  }
+
+  /** Put series used with this brand first, then brand hints, then remaining items (stable). */
+  function orderSeriesSuggestions(items, brandRaw) {
+    if (!items.length) return items;
+    const b = String(brandRaw || '').trim().toLowerCase();
+    const preferred = [];
+    const seen = new Set();
+    const add = (s) => {
+      const t = String(s || '').trim();
+      if (!t) return;
+      const k = t.toLowerCase();
+      if (seen.has(k)) return;
+      seen.add(k);
+      preferred.push(t);
+    };
+    if (b) {
+      for (const d of Object.values(deviceByFp)) {
+        const ub = (d.user_brand || '').trim().toLowerCase();
+        const us = (d.user_series || '').trim();
+        if (us && ub === b) add(us);
+      }
+      const hintKey = seriesBrandHintKey(brandRaw);
+      if (hintKey && SERIES_BRAND_HINTS[hintKey]) {
+        for (const s of SERIES_BRAND_HINTS[hintKey]) add(s);
+      }
+    }
+    const prefLower = new Set(preferred.map((x) => x.toLowerCase()));
+    const out = [];
+    const itemByLower = new Map(items.map((x) => [String(x).toLowerCase(), x]));
+    for (const p of preferred) {
+      const orig = itemByLower.get(p.toLowerCase());
+      if (orig != null) out.push(orig);
+    }
+    for (const x of items) {
+      if (!prefLower.has(String(x).toLowerCase())) out.push(x);
+    }
+    return out;
+  }
+
+  function brandContextForSeriesInput(input) {
+    const modal = input && input.closest && input.closest('#labelEditModal');
+    if (!modal) return '';
+    const b = modal.querySelector('#editLabelBrand');
+    return b && b.value ? String(b.value).trim() : '';
+  }
+
+  function escAttr(s) {
+    return String(s ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/"/g, '&quot;')
+      .replace(/</g, '&lt;');
+  }
+
+  function escHtml(s) {
+    return String(s ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+  }
+
+  /** network_analyzer-style: `.copy-text-target` + `data-copy` + `title` (optional hint + click). */
+  function copyTextTargetSpan(innerHtml, rawForClipboard, titleHint) {
+    const raw = rawForClipboard == null ? '' : String(rawForClipboard);
+    const hint =
+      titleHint != null && String(titleHint).trim() !== ''
+        ? String(titleHint).trim() + ' · Click to copy'
+        : 'Click to copy';
+    return (
+      '<span class="copy-text-target" data-copy="' +
+      escAttr(raw) +
+      '" title="' +
+      escAttr(hint) +
+      '">' +
+      innerHtml +
+      '</span>'
+    );
+  }
+
+  function copyTextTargetPlain(raw, titleHint) {
+    const s = raw == null ? '' : String(raw);
+    return copyTextTargetSpan(escHtml(s), s, titleHint);
+  }
+
+  /** High-contrast pill when the OS/vendor string is a known “missing” brand placeholder. */
+  function copyTextTargetBrandCell(raw, titleHint) {
+    const s = raw == null ? '' : String(raw).trim();
+    if (/^not\s*found$/i.test(s) || /^unknown$/i.test(s)) {
+      const inner = '<span class="tag tag-brand-missing">' + escHtml(s) + '</span>';
+      return copyTextTargetSpan(inner, s, titleHint || 'Inferred brand');
+    }
+    const disp = s || '—';
+    return copyTextTargetPlain(disp, titleHint);
+  }
+
+  let repairConfirmResolve = null;
+  function closeRepairConfirmModal(confirmed) {
+    const m = document.getElementById('repairConfirmModal');
+    if (m) m.classList.add('hidden');
+    const fn = repairConfirmResolve;
+    repairConfirmResolve = null;
+    if (fn) fn(!!confirmed);
+  }
+
+  function openRepairConfirmModal() {
+    return new Promise((resolve) => {
+      const m = document.getElementById('repairConfirmModal');
+      if (!m) {
+        resolve(false);
+        return;
+      }
+      if (repairConfirmResolve != null || !m.classList.contains('hidden')) {
+        resolve(false);
+        return;
+      }
+      repairConfirmResolve = resolve;
+      m.classList.remove('hidden');
+      const okBtn = document.getElementById('repairConfirmOk');
+      if (okBtn) okBtn.focus();
+    });
+  }
+
+  let ejectConfirmResolve = null;
+  function closeEjectConfirmModal(confirmed) {
+    const m = document.getElementById('ejectConfirmModal');
+    if (m) m.classList.add('hidden');
+    const fn = ejectConfirmResolve;
+    ejectConfirmResolve = null;
+    if (fn) fn(!!confirmed);
+  }
+
+  function openEjectConfirmModal(device) {
+    return new Promise((resolve) => {
+      const m = document.getElementById('ejectConfirmModal');
+      const devEl = document.getElementById('ejectConfirmDevice');
+      if (!m || !devEl) {
+        resolve(false);
+        return;
+      }
+      if (ejectConfirmResolve != null || !m.classList.contains('hidden')) {
+        resolve(false);
+        return;
+      }
+      devEl.textContent = (device || '').trim() || '—';
+      ejectConfirmResolve = resolve;
+      m.classList.remove('hidden');
+      const okBtn = document.getElementById('ejectConfirmOk');
+      if (okBtn) okBtn.focus();
+    });
+  }
+
+  /** True if /api/health capability flag is on (JSON may be boolean or legacy numeric). */
+  function healthCapabilityTrue(v) {
+    return v === true || v === 1;
+  }
+
+  function fmtDuration(sec) {
+    const n = Math.max(0, Math.floor(Number(sec) || 0));
+    if (n < 60) return n + 's';
+    const m = Math.floor(n / 60);
+    const s = n % 60;
+    if (m < 60) return m + 'm ' + s + 's';
+    const h = Math.floor(m / 60);
+    return h + 'h ' + (m % 60) + 'm';
+  }
+
+  /** Stored mode → table / report label (raw value stays verify|repair in JSON & DB). */
+  function formatTestMode(mode) {
+    const m = String(mode || '').trim().toLowerCase();
+    if (m === 'repair') return 'First Aid repair';
+    if (m === 'verify') return 'verify (read-only)';
+    if (m === 'cam_stress') return 'Cam stress';
+    return String(mode || '');
+  }
+
+  let runTimerId = null;
+  let runStatusPollId = null;
+  let runStatusExtra = '';
+  let runStatusStats = null;
+  function setRunStatusExtra(text) {
+    runStatusExtra = text ? String(text) : '';
+  }
+  function setRunStatusStats(stats) {
+    runStatusStats = stats && typeof stats === 'object' ? stats : null;
+  }
+  function stopRunStatusPoll() {
+    if (runStatusPollId) {
+      clearInterval(runStatusPollId);
+      runStatusPollId = null;
+    }
+    runStatusExtra = '';
+    runStatusStats = null;
+  }
+  function stopRunTimer() {
+    if (runTimerId) {
+      clearInterval(runTimerId);
+      runTimerId = null;
+    }
+    stopRunStatusPoll();
+    const el = document.getElementById('runStatus');
+    if (el) {
+      el.classList.remove('running', 'indeterminate');
+      el.innerHTML = '';
+    }
+  }
+  function startRunTimer(label, totalSec) {
+    const el = document.getElementById('runStatus');
+    if (!el) return;
+    const target = Number.isFinite(Number(totalSec)) && Number(totalSec) > 0 ? Number(totalSec) : 0;
+    const t0 = Date.now();
+    if (runTimerId) clearInterval(runTimerId);
+    el.classList.add('running');
+    el.classList.toggle('indeterminate', !target);
+    const tick = () => {
+      const s = Math.floor((Date.now() - t0) / 1000);
+      let progressHtml = '<div class="run-progress"><span></span></div>';
+      if (target > 0) {
+        const pct = Math.max(0, Math.min(100, Math.floor((s / target) * 100)));
+        progressHtml = '<div class="run-progress"><span style="width:' + pct + '%"></span></div>';
+        el.innerHTML =
+          '<div class="run-status-line"><span class="run-status-spin" aria-hidden="true"></span><span class="run-status-label">' +
+          label + ' — ' + fmtDuration(s) + ' / ' + fmtDuration(target) + ' (' + pct + '%)</span></div>' +
+          progressHtml;
+      } else {
+        el.innerHTML =
+          '<div class="run-status-line"><span class="run-status-spin" aria-hidden="true"></span><span class="run-status-label">' +
+          label + ' — ' + fmtDuration(s) + '</span></div>' +
+          progressHtml;
+      }
+      if (runStatusExtra) {
+        el.innerHTML += '<div class="run-status-sub">' + escHtml(runStatusExtra) + '</div>';
+      }
+      if (runStatusStats) {
+        const cW = runStatusStats.current_write_mib_s != null ? String(runStatusStats.current_write_mib_s) : '—';
+        const aW = runStatusStats.avg_write_mib_s != null ? String(runStatusStats.avg_write_mib_s) : '—';
+        const pW = runStatusStats.peak_write_mib_s != null ? String(runStatusStats.peak_write_mib_s) : '—';
+        const cR = runStatusStats.current_read_mib_s != null ? String(runStatusStats.current_read_mib_s) : '—';
+        const aR = runStatusStats.avg_read_mib_s != null ? String(runStatusStats.avg_read_mib_s) : '—';
+        const pR = runStatusStats.peak_read_mib_s != null ? String(runStatusStats.peak_read_mib_s) : '—';
+        el.innerHTML +=
+          '<table class="run-live-table" aria-label="Live speed metrics">' +
+          '<thead><tr><th>Metric</th><th>Current</th><th>Avg</th><th>Peak</th></tr></thead>' +
+          '<tbody>' +
+          '<tr><td>Write MiB/s</td><td>' + cW + '</td><td>' + aW + '</td><td>' + pW + '</td></tr>' +
+          '<tr><td>Read MiB/s</td><td>' + cR + '</td><td>' + aR + '</td><td>' + pR + '</td></tr>' +
+          '</tbody></table>';
+      }
+    };
+    tick();
+    runTimerId = setInterval(tick, 500);
+  }
+
+  function startRunStatusPoll() {
+    stopRunStatusPoll();
+    setRunStatusExtra('waiting live metrics…');
+    const poll = async () => {
+      try {
+        const res = await fetch('/api/test/status');
+        if (!res.ok) {
+          setRunStatusExtra('live metrics unavailable (restart server to latest build)');
+          return;
+        }
+        const st = await res.json().catch(() => ({}));
+        if (!st || !st.running || st.mode !== 'cam_stress') {
+          if (runStatusExtra && runStatusExtra.includes('unavailable')) return;
+          setRunStatusExtra('waiting live metrics…');
+          return;
+        }
+        const parts = [];
+        if (st.phase) parts.push('phase: ' + String(st.phase));
+        if (st.written_mib != null) parts.push('written: ' + String(st.written_mib) + ' MiB');
+        if (st.current_write_mib_s != null) parts.push('write now: ' + String(st.current_write_mib_s) + ' MiB/s');
+        if (st.avg_write_mib_s != null) parts.push('write avg: ' + String(st.avg_write_mib_s) + ' MiB/s');
+        if (st.current_read_mib_s != null) parts.push('read now: ' + String(st.current_read_mib_s) + ' MiB/s');
+        if (st.avg_read_mib_s != null) parts.push('read avg: ' + String(st.avg_read_mib_s) + ' MiB/s');
+        setRunStatusExtra(parts.join(' · '));
+        setRunStatusStats({
+          current_write_mib_s: st.current_write_mib_s,
+          avg_write_mib_s: st.avg_write_mib_s,
+          peak_write_mib_s: st.peak_write_mib_s,
+          current_read_mib_s: st.current_read_mib_s,
+          avg_read_mib_s: st.avg_read_mib_s,
+          peak_read_mib_s: st.peak_read_mib_s,
+        });
+      } catch (_) {
+        setRunStatusExtra('live metrics unavailable (restart server to latest build)');
+        setRunStatusStats(null);
+      }
+    };
+    poll();
+    runStatusPollId = setInterval(poll, 800);
+  }
+
+  let allRuns = [];
+  let deviceByFp = {};
+  /** macOS: diskutil verify/repair/eject available (from /api/platform). */
+  let platformDiskutilAvailable = false;
+  let lastCandidates = [];
+  let prevCandFingerprints = null;
+  let modalMount = '';
+  let runSortState = { key: 'finished_at', dir: 'desc' };
+  let candSortState = { key: 'mount_point', dir: 'asc' };
+  /** 'all' = per-run table; 'byId' = one row per storage fingerprint (latest result → OK to use?). */
+  let runsViewMode = 'all';
+  const DEMO_MODE_STORAGE_KEY = 'storage_health_demo_mode_v1';
+  let demoMode = false;
+
+  function initDemoMode() {
+    try {
+      demoMode = localStorage.getItem(DEMO_MODE_STORAGE_KEY) === '1';
+    } catch (_) {
+      demoMode = false;
+    }
+    applyDemoModeUi();
+  }
+
+  function setDemoMode(on) {
+    demoMode = !!on;
+    try {
+      localStorage.setItem(DEMO_MODE_STORAGE_KEY, demoMode ? '1' : '0');
+    } catch (_) {
+      /* ignore storage errors */
+    }
+    applyDemoModeUi();
+    setMsg(
+      demoMode
+        ? 'Demo mode enabled: paths/IDs/labels are masked for screenshots.'
+        : 'Demo mode disabled: showing original values.',
+      'ok',
+      { autoHideMs: 3500 }
+    );
+    applyFilter();
+    renderCandidates(lastCandidates);
+    loadPlatform();
+  }
+
+  function applyDemoModeUi() {
+    document.body.classList.toggle('demo-mode-on', demoMode);
+    const btn = document.getElementById('btnDemoMode');
+    if (btn) {
+      btn.textContent = demoMode ? 'Demo mode: On' : 'Demo mode: Off';
+      btn.classList.toggle('btn-tone-info', demoMode);
+    }
+  }
+
+  function demoMaskPath(v) {
+    const s = String(v || '').trim();
+    if (!s) return '—';
+    return '/Volumes/CAMCARD';
+  }
+
+  function demoMaskDisk(v) {
+    const s = String(v || '').trim();
+    if (!s || s === '—') return '—';
+    return 'diskX';
+  }
+
+  function demoMaskFingerprint(v) {
+    const s = String(v || '').trim();
+    if (!s || s === '—') return '—';
+    return 'demo-id';
+  }
+
+  function demoMaskLabel(v, fallback = 'Sample') {
+    const s = String(v || '').trim();
+    if (!s || s === '—') return '—';
+    return fallback;
+  }
+
+  function demoMaskBrand(v) {
+    const s = String(v || '').trim();
+    if (!s || s === '—') return '—';
+    return 'BrandX';
+  }
+
+  function demoMaskSeries(v) {
+    const s = String(v || '').trim();
+    if (!s || s === '—') return '—';
+    return 'Series A';
+  }
+
+  function demoMaskNotes(v) {
+    const s = String(v || '').trim();
+    if (!s || s === '—') return '—';
+    return 'sample note';
+  }
+
+  function displayMount(v) {
+    return demoMode ? demoMaskPath(v) : String(v || '—');
+  }
+
+  function displayDisk(v) {
+    return demoMode ? demoMaskDisk(v) : String(v || '—');
+  }
+
+  function displayFingerprintShort(v) {
+    return demoMode ? demoMaskFingerprint(v) : String(v || '—');
+  }
+
+  function displayPen(v) {
+    return demoMode ? demoMaskLabel(v, 'Sample card') : String(v || '—');
+  }
+
+  function displayNotes(v) {
+    return demoMode ? demoMaskNotes(v) : String(v || '—');
+  }
+
+  function displayBrand(v) {
+    return demoMode ? demoMaskBrand(v) : String(v || '—');
+  }
+
+  function displaySeries(v) {
+    return demoMode ? demoMaskSeries(v) : String(v || '—');
+  }
+
+  function runFingerprintKey(r) {
+    const id = r.identity || {};
+    // Keep per-run ID stable; do not remap historical runs to currently mounted media.
+    return String((r.fingerprint || id.fingerprint) || '').trim();
+  }
+
+  /** Latest run pass → Yes; fail → No; error → Error (plain language for By ID view). */
+  function usablePhrase(result) {
+    const res = result || '';
+    if (res === 'pass') return { text: 'Yes', cls: 'result-pass' };
+    if (res === 'fail') return { text: 'No', cls: 'result-fail' };
+    return { text: 'Error', cls: 'result-err' };
+  }
+
+  function resultClass(res) {
+    if (res === 'pass') return 'result-pass';
+    if (res === 'fail') return 'result-fail';
+    return 'result-err';
+  }
+
+  function summarize(rows) {
+    let pass = 0, fail = 0, err = 0;
+    for (const r of rows) {
+      if (r.result === 'pass') pass++;
+      else if (r.result === 'fail') fail++;
+      else err++;
+    }
+    document.getElementById('cPass').textContent = pass;
+    document.getElementById('cFail').textContent = fail;
+    document.getElementById('cErr').textContent = err;
+  }
+
+  function normalizeDiskId(s) {
+    if (s == null || s === '') return '';
+    return String(s).trim().replace(/^\/dev\//, '');
+  }
+
+  function runDiskIdDisplay(r) {
+    const id = r.identity || {};
+    const ex = id.extra && typeof id.extra === 'object' ? id.extra : {};
+    const s = normalizeDiskId(ex.device_identifier || '');
+    return displayDisk(s || '—');
+  }
+
+  /** Quick/cam-stress benchmark from persisted identity.extra (if any). */
+  function runQuickBench(r) {
+    const id = r.identity || {};
+    const ex = id.extra && typeof id.extra === 'object' ? id.extra : {};
+    let qb = {};
+    if (ex.quick_benchmark && typeof ex.quick_benchmark === 'object') qb = ex.quick_benchmark;
+    else if (ex.cam_stress_benchmark && typeof ex.cam_stress_benchmark === 'object') qb = ex.cam_stress_benchmark;
+    const sample = qb.sample_mib != null ? qb.sample_mib : qb.written_mib;
+    const ws = qb.write_mib_s;
+    const rs = qb.read_mib_s;
+    return {
+      sample_mib: sample != null && Number.isFinite(Number(sample)) ? Number(sample) : null,
+      write_mib_s: ws != null && Number.isFinite(Number(ws)) ? Number(ws) : null,
+      read_mib_s: rs != null && Number.isFinite(Number(rs)) ? Number(rs) : null,
+    };
+  }
+
+  /** Passing run with real benchmark numbers only (for throughput chart). */
+  function runHasThroughputForChart(r) {
+    if (r.result !== 'pass') return false;
+    const qb = runQuickBench(r);
+    const w = qb.write_mib_s;
+    const rd = qb.read_mib_s;
+    const sz = qb.sample_mib;
+    return (
+      w != null &&
+      rd != null &&
+      sz != null &&
+      w > 0 &&
+      rd > 0 &&
+      sz > 0
+    );
+  }
+
+  function candidateDiskIdDisplay(r) {
+    const s = normalizeDiskId(r.device || '');
+    return displayDisk(s || '—');
+  }
+
+  /** Same rule as test-run row ID: saved short id, else first 12 chars of fingerprint. */
+  function candidateFingerprintShortDisplay(r) {
+    const full = r.fingerprint || '';
+    const short = (r.fingerprint_short || '').trim();
+    if (short) return displayFingerprintShort(short);
+    if (full) return displayFingerprintShort(full.slice(0, 12));
+    return displayFingerprintShort('—');
+  }
+
+  function runIdentityBits(r) {
+    const id = r.identity || {};
+    const fp = runFingerprintKey(r);
+    const dev = fp && deviceByFp[fp] ? deviceByFp[fp] : null;
+    let pen = dev && dev.user_label ? String(dev.user_label).trim() : '';
+    if (!pen && id.volume_name) pen = String(id.volume_name).trim();
+    let brand = id.brand || '—';
+    let series = id.series || '—';
+    if (dev) {
+      const ub = (dev.user_brand || '').trim();
+      const us = (dev.user_series || '').trim();
+      if (ub) brand = ub;
+      if (us) series = us;
+    }
+    const rateDisp = (id.capacity_nominal_label || '').trim() || '—';
+    const osDisp = String((id.capacity_os_label || id.capacity_label || '—')).trim() || '—';
+    const capTip = id.capacity_tooltip ? String(id.capacity_tooltip) : '';
+    return {
+      type: id.media_type_label || id.media_type || '—',
+      rate: rateDisp,
+      cap: osDisp,
+      capTooltip: capTip,
+      pen: displayPen(pen),
+      brand: displayBrand(brand),
+      series: displaySeries(series),
+      fp: displayFingerprintShort(runFingerprintKey(r).slice(0, 12) || id.fingerprint_short || '—'),
+    };
+  }
+
+  function fmtIsoHuman(iso) {
+    if (!iso) return '';
+    return String(iso).replace('T', ' ').slice(0, 19) + ' UTC';
+  }
+
+  function runDurationHuman(started, finished) {
+    try {
+      const a = new Date(started).getTime();
+      const b = new Date(finished).getTime();
+      if (!Number.isFinite(a) || !Number.isFinite(b)) return '';
+      const sec = Math.round((b - a) / 1000);
+      return sec >= 0 ? fmtDuration(sec) : '';
+    } catch (_) {
+      return '';
+    }
+  }
+
+  function detailSection(title, pairs) {
+    const rows = pairs.filter((p) => {
+      const v = p[1];
+      return v != null && String(v).trim() !== '' && String(v) !== '—';
+    });
+    if (!rows.length) return '';
+    let h = '<h3 class="detail-sec-title">' + escHtml(title) + '</h3><dl class="detail-dl">';
+    for (const p of rows) {
+      const k = p[0];
+      const v = p[1];
+      const mono = p[2];
+      const tip = p.length > 3 && p[3] ? String(p[3]) : '';
+      const cls = 'detail-dd' + (mono ? ' mono' : '');
+      h +=
+        '<dt>' +
+        copyTextTargetPlain(k) +
+        '</dt><dd class="' +
+        cls +
+        '">' +
+        copyTextTargetPlain(String(v), tip) +
+        '</dd>';
+    }
+    h += '</dl>';
+    return h;
+  }
+
+  function detailProse(title, text, err) {
+    if (!text || !String(text).trim()) return '';
+    const cls = 'detail-prose' + (err ? ' detail-prose-err' : '');
+    return (
+      '<h3 class="detail-sec-title">' +
+      escHtml(title) +
+      '</h3><div class="' +
+      cls +
+      '"><span class="copy-text-target" data-copy="" title="Click to copy">' +
+      escHtml(String(text)) +
+      '</span></div>'
+    );
+  }
+
+  let detailSelection = { kind: '', id: '' };
+
+  function findRunRowEl(runId) {
+    return [...document.querySelectorAll('tr.data-row')].find((el) => el.dataset.runId === runId) || null;
+  }
+
+  function findCandRowEl(fp) {
+    return [...document.querySelectorAll('tr.click-row')].find((el) => el.dataset.fingerprint === fp) || null;
+  }
+
+  function tsvCell(s) {
+    return String(s ?? '').replace(/\r?\n/g, ' ').replace(/\t/g, ' ');
+  }
+
+  /** Human message for failed fetch(); explains 404 when the server predates newer routes. */
+  function messageFromApiError(res, data) {
+    if (res.status === 404) {
+      return (
+        'API not found (404). Stop the running storage-health process and start it again from this repo so routes ' +
+        'like /api/eject and /api/test/repair-volume are registered — e.g. pip install -e . && storage-health serve'
+      );
+    }
+    const d = data && data.detail;
+    if (typeof d === 'string') return d;
+    if (Array.isArray(d)) return JSON.stringify(d);
+    try {
+      const o = data && typeof data === 'object' ? data : {};
+      return Object.keys(o).length ? JSON.stringify(o) : 'Request failed (' + res.status + ')';
+    } catch (_) {
+      return 'Request failed (' + res.status + ')';
+    }
+  }
+
+  function runRowAsTsv(r) {
+    const b = runIdentityBits(r);
+    const qb = runQuickBench(r);
+    const cells = [
+      (r.finished_at || '').replace('T', ' ').slice(0, 19),
+      r.test_mode || '',
+      r.result || '',
+      runDiskIdDisplay(r),
+      b.fp,
+      (b.pen || '—'),
+      b.brand,
+      b.series,
+      (r.identity && r.identity.filesystem) || '—',
+      b.rate,
+      b.cap,
+      qb.sample_mib != null ? String(qb.sample_mib) : '—',
+      qb.write_mib_s != null ? String(qb.write_mib_s) : '—',
+      qb.read_mib_s != null ? String(qb.read_mib_s) : '—',
+    ];
+    return cells.map(tsvCell).join('\t');
+  }
+
+  function candRowAsTsv(r) {
+    const sorted = sortCandRows(lastCandidates.filter((x) => !x.error));
+    const idx = sorted.findIndex((x) => x.fingerprint === r.fingerprint && !x.error);
+    const ord = idx >= 0 ? String(idx + 1) : '';
+    const pen = ((r.user_label || '').trim() || (r.display_pen_name || '').trim() || '—');
+    const ratedCap = (r.capacity_nominal_label || '').trim() || '—';
+    const osCap = (r.capacity_os_label || r.capacity_label || '—');
+    const fpFull = r.fingerprint || '';
+    const cells = [
+      ord,
+      r.mount_point || '—',
+      candidateDiskIdDisplay(r),
+      fpFull || candidateFingerprintShortDisplay(r) || '—',
+      pen,
+      (r.user_brand || ''),
+      (r.user_series || ''),
+      r.filesystem || '—',
+      osCap,
+      ratedCap,
+      (r.media_type_label || r.media_type || '—'),
+      (r.user_notes || ''),
+      r.known_device ? 'Known' : 'New',
+    ];
+    return cells.map(tsvCell).join('\t');
+  }
+
+  function getSelectedRunRecord() {
+    let id = detailSelection.kind === 'run' ? detailSelection.id : '';
+    if (!id) {
+      const tr = document.querySelector('tr.data-row.detail-selected');
+      id = (tr && tr.dataset && tr.dataset.runId) || '';
+    }
+    if (!id) return null;
+    return allRuns.find((x) => x.run_id === id) || null;
+  }
+
+  function getSelectedCandRecord() {
+    let id = detailSelection.kind === 'cand' ? detailSelection.id : '';
+    if (!id) {
+      const tr = document.querySelector('tr.click-row.detail-selected');
+      id = (tr && tr.dataset && tr.dataset.fingerprint) || '';
+    }
+    if (!id) return null;
+    return lastCandidates.find((x) => x.fingerprint === id && !x.error) || null;
+  }
+
+  function clearDetailRowHighlight() {
+    document.querySelectorAll('tr.detail-selected').forEach((tr) => tr.classList.remove('detail-selected'));
+  }
+
+  function closeDetailPanel() {
+    const panel = document.getElementById('detailPanel');
+    if (!panel) return;
+    panel.classList.add('hidden');
+    panel.setAttribute('aria-hidden', 'true');
+    clearDetailRowHighlight();
+    detailSelection = { kind: '', id: '' };
+    const raw = document.getElementById('detailRawWrap');
+    if (raw) raw.open = false;
+  }
+
+  function openDetailPanel(title, html, rawObj) {
+    const panel = document.getElementById('detailPanel');
+    const body = document.getElementById('detailPanelBody');
+    const ttl = document.getElementById('detailPanelTitle');
+    const pre = document.getElementById('detailPanelRaw');
+    if (!panel || !body || !ttl || !pre) return;
+    ttl.textContent = title;
+    body.innerHTML = html;
+    pre.textContent = JSON.stringify(rawObj, null, 2);
+    panel.classList.remove('hidden');
+    panel.setAttribute('aria-hidden', 'false');
+  }
+
+  function formatRunDetailHuman(r) {
+    const id = r.identity || {};
+    const b = runIdentityBits(r);
+    const ex = id.extra && typeof id.extra === 'object' ? id.extra : {};
+    const vu = id.volume_uuid || ex.volume_uuid || '';
+    const parts = [];
+    const resRaw = r.result || '';
+    const resDisp = (resRaw || '—').toUpperCase();
+    parts.push(
+      '<div class="detail-hero"><span class="detail-kind">' + copyTextTargetPlain('Test run') + '</span> ',
+      '<span class="detail-result ' +
+        resultClass(r.result) +
+        '">' +
+        copyTextTargetSpan(escHtml(resDisp), resRaw) +
+        '</span></div>'
+    );
+    parts.push(
+      detailSection('Run', [
+        ['Mode', formatTestMode(r.test_mode || '')],
+        ['Finished', fmtIsoHuman(r.finished_at)],
+        ['Started', fmtIsoHuman(r.started_at)],
+        ['Duration', runDurationHuman(r.started_at, r.finished_at)],
+        ['Run ID', r.run_id || ''],
+        ['Host OS', r.host_os || ''],
+      ])
+    );
+    const volCapPairs = [];
+    const idnom = (id.capacity_nominal_label || '').trim();
+    const idos = (id.capacity_os_label || '').trim();
+    if (idnom) {
+      volCapPairs.push(['Rate', idnom]);
+      if (idos) {
+        volCapPairs.push(['Size', idos, false, id.capacity_tooltip || '']);
+      }
+    } else {
+      const oneCap = (id.capacity_label || idos || '').trim();
+      if (oneCap) {
+        volCapPairs.push(['Capacity', oneCap, false, id.capacity_tooltip || '']);
+      }
+    }
+    parts.push(
+      detailSection('Volume & labels', [
+        ['Mount', displayMount(r.mount_point || '')],
+        ['OS disk', displayDisk(normalizeDiskId(ex.device_identifier || '') || '—')],
+        ['Name on card', b.pen || ''],
+        ['Media type', b.type || ''],
+        ...volCapPairs,
+        ['Brand', b.brand || ''],
+        ['Series', b.series || ''],
+      ])
+    );
+    parts.push(
+      detailSection('Hardware & identity', [
+        ['Fingerprint (full)', displayFingerprintShort(r.fingerprint || id.fingerprint || ''), true],
+        ['Fingerprint (short)', id.fingerprint_short || b.fp || '', true],
+        ['Vendor', id.vendor || ''],
+        ['Model', id.model || ''],
+        ['Serial', demoMode ? 'masked' : (id.serial || '')],
+        ['Filesystem', id.filesystem || ''],
+        ['Volume UUID', vu],
+      ])
+    );
+    if (r.device_path) {
+      parts.push(detailSection('Device path', [['Block device', displayDisk(r.device_path), true]]));
+    }
+    if (r.operator_notes) {
+      parts.push(detailSection('This run', [['Operator notes', displayNotes(r.operator_notes)]]));
+    }
+    const qb = (ex.quick_benchmark && typeof ex.quick_benchmark === 'object')
+      ? ex.quick_benchmark
+      : (ex.cam_stress_benchmark && typeof ex.cam_stress_benchmark === 'object' ? ex.cam_stress_benchmark : null);
+    if (qb && typeof qb === 'object') {
+      const speedPairs = [];
+      if (qb.write_mib_s != null) speedPairs.push(['Write speed', '~' + qb.write_mib_s + ' MiB/s']);
+      if (qb.read_mib_s != null) speedPairs.push(['Read speed', '~' + qb.read_mib_s + ' MiB/s']);
+      if (qb.sample_mib != null) speedPairs.push(['Sample size', String(qb.sample_mib) + ' MiB']);
+      if (qb.written_mib != null) speedPairs.push(['Written total', String(qb.written_mib) + ' MiB']);
+      if (speedPairs.length) parts.push(detailSection('Speed metrics', speedPairs));
+    }
+    const vv = ex.volume_verify;
+    if (vv && typeof vv === 'object' && (vv.tool || vv.diskutil_result)) {
+      parts.push(
+        detailSection('Volume verify (read-only)', [
+          ['diskutil', String(vv.tool || '') + ' → ' + String(vv.diskutil_result || '')],
+        ])
+      );
+    }
+    const vrep = ex.volume_repair;
+    if (vrep && typeof vrep === 'object' && (vrep.tool || vrep.diskutil_result)) {
+      parts.push(
+        detailSection('First Aid repair (Disk Utility)', [
+          [
+            'diskutil',
+            String(vrep.tool || '') + ' → ' + String(vrep.diskutil_result || ''),
+          ],
+        ])
+      );
+    }
+    parts.push(detailProse('Summary', r.summary || '', false));
+    const ed = String(r.error_detail || '').trim();
+    if (ed) {
+      const okLog = r.result === 'pass';
+      parts.push(
+        detailProse(
+          okLog ? 'diskutil output (full log)' : 'Error detail',
+          r.error_detail || '',
+          !okLog
+        )
+      );
+    }
+    const misc = [];
+    if (ex.protocol) misc.push(['Bus / protocol', String(ex.protocol)]);
+    if (ex.media_name) misc.push(['Media name', String(ex.media_name)]);
+    if (ex.device_identifier) misc.push(['Device id', displayDisk(String(ex.device_identifier))]);
+    if (ex.usb_vendor) misc.push(['USB vendor', String(ex.usb_vendor)]);
+    if (ex.device_model) misc.push(['USB model', String(ex.device_model)]);
+    if (misc.length) parts.push(detailSection('Connection & extras', misc));
+    return parts.join('');
+  }
+
+  function formatCandidateDetailHuman(r) {
+    const parts = [];
+    const st = r.known_device ? 'Known device' : 'New to history';
+    parts.push(
+      '<div class="detail-hero"><span class="detail-kind">' + copyTextTargetPlain('Removable volume') + '</span> ',
+      '<span class="detail-badge">' + copyTextTargetPlain(st) + '</span></div>'
+    );
+    const candCapPairs = [];
+    const cn = (r.capacity_nominal_label || '').trim();
+    const cos = (r.capacity_os_label || '').trim();
+    if (cn) {
+      candCapPairs.push(['Rate', cn]);
+      if (cos) {
+        candCapPairs.push(['Size', cos, false, r.capacity_tooltip || '']);
+      }
+    } else {
+      const oneCand = (r.capacity_label || cos || '').trim();
+      if (oneCand) {
+        candCapPairs.push(['Capacity', oneCand, false, r.capacity_tooltip || '']);
+      }
+    }
+    parts.push(
+      detailSection('Volume', [
+        ['Mount point', displayMount(r.mount_point || '')],
+        ['OS disk', displayDisk(normalizeDiskId(r.device || '') || '—')],
+        ['Volume name', demoMode ? 'CAMCARD' : (r.volume_name || r.friendly_name || '')],
+        ...candCapPairs,
+        ['Media type', r.media_type_label || r.media_type || ''],
+      ])
+    );
+    parts.push(
+      detailSection('Detected hardware', [
+        ['Fingerprint (full)', displayFingerprintShort(r.fingerprint || ''), true],
+        ['Short ID', displayFingerprintShort(r.fingerprint_short || ''), true],
+        ['Vendor', r.vendor || ''],
+        ['Model', r.model || r.friendly_name || ''],
+        ['Serial', demoMode ? 'masked' : (r.serial || r.serial_number || '')],
+      ])
+    );
+    parts.push(
+      detailSection('Your labels (editable in table)', [
+        ['Pen / card name', displayPen((r.user_label || '').trim() || r.display_pen_name || '')],
+        ['Brand', displayBrand((r.user_brand || '').trim() || r.display_brand || '')],
+        ['Series', displaySeries((r.user_series || '').trim() || r.display_series || '')],
+        ['Notes', displayNotes((r.user_notes || '').trim() || '')],
+      ])
+    );
+    parts.push(
+      detailSection('Auto-detected text', [
+        ['Brand guess', displayBrand(r.brand || '')],
+        ['Series guess', displaySeries(r.series || '')],
+      ])
+    );
+    return parts.join('');
+  }
+
+  function toggleRunDetail(r) {
+    const id = r.run_id || '';
+    if (detailSelection.kind === 'run' && detailSelection.id === id) {
+      closeDetailPanel();
+      return;
+    }
+    detailSelection = { kind: 'run', id };
+    clearDetailRowHighlight();
+    const tr = findRunRowEl(id);
+    if (tr) tr.classList.add('detail-selected');
+    const runTitle = (r.mount_point || '').trim()
+      ? 'Run — ' + displayMount((r.mount_point || '').trim())
+      : 'Run — ' + String(r.run_id || '').slice(0, 13);
+    openDetailPanel(runTitle, formatRunDetailHuman(r), r);
+  }
+
+  function toggleCandidateDetail(r) {
+    const id = r.fingerprint || '';
+    if (detailSelection.kind === 'cand' && detailSelection.id === id) {
+      closeDetailPanel();
+      return;
+    }
+    detailSelection = { kind: 'cand', id };
+    clearDetailRowHighlight();
+    const tr = findCandRowEl(id);
+    if (tr) tr.classList.add('detail-selected');
+    const disk = candidateDiskIdDisplay(r);
+    const volTitle = (r.mount_point || '').trim()
+      ? 'Volume — ' + displayMount((r.mount_point || '').trim())
+      : 'Volume — ' + (disk !== '—' ? disk : String(r.fingerprint_short || '').slice(0, 12));
+    openDetailPanel(volTitle, formatCandidateDetailHuman(r), r);
+  }
+
+  const RUN_NUM_SORT = new Set(['rate', 'size', 'edit_col', 'qb_sample_mib', 'qb_write_mib_s', 'qb_read_mib_s']);
+  const RUN_QB_SORT = new Set(['qb_sample_mib', 'qb_write_mib_s', 'qb_read_mib_s']);
+
+  function runSortComparable(r, key) {
+    const id = r.identity || {};
+    const b = runIdentityBits(r);
+    const qb = runQuickBench(r);
+    switch (key) {
+      case 'edit_col': return runFingerprintKey(r) ? 1 : 0;
+      case 'finished_at': return r.finished_at || '';
+      case 'test_mode': return (r.test_mode || '').toLowerCase();
+      case 'result': return (r.result || '').toLowerCase();
+      case 'disk_id': return normalizeDiskId((id.extra && id.extra.device_identifier) || '').toLowerCase();
+      case 'rate': return Number(id.capacity_bytes) || 0;
+      case 'size': return Number(id.capacity_bytes) || 0;
+      case 'qb_sample_mib': return qb.sample_mib != null ? qb.sample_mib : -1;
+      case 'qb_write_mib_s': return qb.write_mib_s != null ? qb.write_mib_s : -1;
+      case 'qb_read_mib_s': return qb.read_mib_s != null ? qb.read_mib_s : -1;
+      case 'pen': return (b.pen || '').toLowerCase();
+      case 'brand': return String(b.brand || '').toLowerCase();
+      case 'series': return String(b.series || '').toLowerCase();
+      case 'filesystem': return String(id.filesystem || '').toLowerCase();
+      case 'id': return String((r.fingerprint || id.fingerprint) || '').toLowerCase();
+      default: return '';
+    }
+  }
+
+  function sortRunRows(rows) {
+    const key = runSortState.key;
+    const dir = runSortState.dir === 'asc' ? 1 : -1;
+    return rows.slice().sort((ra, rb) => {
+      const a = runSortComparable(ra, key);
+      const b = runSortComparable(rb, key);
+      let c = 0;
+      if (RUN_NUM_SORT.has(key)) {
+        let na = Number(a);
+        let nb = Number(b);
+        if (RUN_QB_SORT.has(key)) {
+          if (!Number.isFinite(na) || na < 0) na = NaN;
+          if (!Number.isFinite(nb) || nb < 0) nb = NaN;
+          const ma = Number.isNaN(na);
+          const mb = Number.isNaN(nb);
+          if (ma && mb) c = 0;
+          else if (ma) c = 1;
+          else if (mb) c = -1;
+          else if (na < nb) c = -1;
+          else if (na > nb) c = 1;
+        } else {
+          const na2 = Number(a) || 0;
+          const nb2 = Number(b) || 0;
+          if (na2 < nb2) c = -1;
+          else if (na2 > nb2) c = 1;
+        }
+      } else {
+        const sa = String(a);
+        const sb = String(b);
+        if (sa < sb) c = -1;
+        else if (sa > sb) c = 1;
+      }
+      if (c !== 0) return c * dir;
+      if (key === 'brand') {
+        const ba = runIdentityBits(ra);
+        const bb = runIdentityBits(rb);
+        const sa = String(ba.series || '').toLowerCase();
+        const sb = String(bb.series || '').toLowerCase();
+        if (sa < sb) c = -1;
+        else if (sa > sb) c = 1;
+        else c = 0;
+        if (c !== 0) return c * dir;
+      } else if (key === 'series') {
+        const ba = runIdentityBits(ra);
+        const bb = runIdentityBits(rb);
+        const bra = String(ba.brand || '').toLowerCase();
+        const brb = String(bb.brand || '').toLowerCase();
+        if (bra < brb) c = -1;
+        else if (bra > brb) c = 1;
+        else c = 0;
+        if (c !== 0) return c * dir;
+      }
+      return String(ra.run_id || '').localeCompare(String(rb.run_id || ''));
+    });
+  }
+
+  const CAND_NUM_SORT = new Set(['size']);
+
+  function candSortComparable(r, key) {
+    const pen = ((r.user_label || '').trim() || (r.display_pen_name || '').trim()).toLowerCase();
+    switch (key) {
+      case 'actions_col': return ((r.mount_point || '') + '\t' + (r.fingerprint || '')).toLowerCase();
+      case 'mount_point': return (r.mount_point || '').toLowerCase();
+      case 'disk_id': return normalizeDiskId(r.device || '').toLowerCase();
+      case 'media_type': return (r.media_type_label || r.media_type || '').toLowerCase();
+      case 'filesystem': return String(r.filesystem || '').toLowerCase();
+      case 'size': return Number(r.capacity_bytes) || 0;
+      case 'pen': return pen;
+      case 'user_brand': return (r.user_brand || '').toLowerCase();
+      case 'user_series': return (r.user_series || '').toLowerCase();
+      case 'user_notes': return (r.user_notes || '').toLowerCase();
+      case 'id': return String(r.fingerprint || '').toLowerCase();
+      case 'status': return r.known_device ? 'known' : 'new';
+      default: return '';
+    }
+  }
+
+  function sortCandRows(rows) {
+    const key = candSortState.key;
+    const dir = candSortState.dir === 'asc' ? 1 : -1;
+    return rows.slice().sort((ra, rb) => {
+      const a = candSortComparable(ra, key);
+      const b = candSortComparable(rb, key);
+      let c = 0;
+      if (CAND_NUM_SORT.has(key)) {
+        const na = Number(a) || 0;
+        const nb = Number(b) || 0;
+        if (na < nb) c = -1;
+        else if (na > nb) c = 1;
+      } else {
+        const sa = String(a);
+        const sb = String(b);
+        if (sa < sb) c = -1;
+        else if (sa > sb) c = 1;
+      }
+      if (c !== 0) return c * dir;
+      if (key === 'user_brand') {
+        const sa = String(ra.user_series || '').toLowerCase();
+        const sb = String(rb.user_series || '').toLowerCase();
+        if (sa < sb) c = -1;
+        else if (sa > sb) c = 1;
+        else c = 0;
+        if (c !== 0) return c * dir;
+      } else if (key === 'user_series') {
+        const ba = String(ra.user_brand || '').toLowerCase();
+        const bb = String(rb.user_brand || '').toLowerCase();
+        if (ba < bb) c = -1;
+        else if (ba > bb) c = 1;
+        else c = 0;
+        if (c !== 0) return c * dir;
+      }
+      return String(ra.fingerprint || '').localeCompare(String(rb.fingerprint || ''));
+    });
+  }
+
+  function updateRunSortHeaders() {
+    document.querySelectorAll('#tableRuns thead th').forEach((th) => th.removeAttribute('aria-sort'));
+    document.querySelectorAll('#tableRuns thead th[data-sort-key]').forEach((th) => {
+      const k = th.dataset.sortKey;
+      const ind = th.querySelector('.sort-ind');
+      const active = k === runSortState.key;
+      th.classList.toggle('th-sort-active', active);
+      th.classList.toggle('th-sort-asc', active && runSortState.dir === 'asc');
+      th.classList.toggle('th-sort-desc', active && runSortState.dir === 'desc');
+      if (ind) ind.textContent = active ? (runSortState.dir === 'asc' ? ' ↑' : ' ↓') : '';
+      if (active) th.setAttribute('aria-sort', runSortState.dir === 'asc' ? 'ascending' : 'descending');
+    });
+  }
+
+  function updateCandSortHeaders() {
+    document.querySelectorAll('#tableCandidates thead th').forEach((th) => th.removeAttribute('aria-sort'));
+    document.querySelectorAll('#tableCandidates thead th[data-sort-key]').forEach((th) => {
+      const k = th.dataset.sortKey;
+      const ind = th.querySelector('.sort-ind');
+      const active = k === candSortState.key;
+      th.classList.toggle('th-sort-active', active);
+      th.classList.toggle('th-sort-asc', active && candSortState.dir === 'asc');
+      th.classList.toggle('th-sort-desc', active && candSortState.dir === 'desc');
+      if (ind) ind.textContent = active ? (candSortState.dir === 'asc' ? ' ↑' : ' ↓') : '';
+      if (active) th.setAttribute('aria-sort', candSortState.dir === 'asc' ? 'ascending' : 'descending');
+    });
+  }
+
+  function fmtRows(rows) {
+    const tb = document.getElementById('body');
+    const empty = document.getElementById('empty');
+    summarize(allRuns);
+    tb.innerHTML = '';
+    if (!rows.length) {
+      empty.classList.remove('hidden');
+      document.getElementById('shown').textContent = allRuns.length ? '0 match filter' : '';
+      return;
+    }
+    empty.classList.add('hidden');
+    for (const r of rows) {
+      const id = r.identity || {};
+      const b = runIdentityBits(r);
+      const qb = runQuickBench(r);
+      const fpFull = runFingerprintKey(r);
+      const idCell = fpFull
+        ? copyTextTargetSpan(escHtml(b.fp), displayFingerprintShort(fpFull), 'Full fingerprint · click to copy')
+        : copyTextTargetPlain(b.fp);
+      const qSample = qb.sample_mib != null ? String(qb.sample_mib) : '—';
+      const qW = qb.write_mib_s != null ? String(qb.write_mib_s) : '—';
+      const qR = qb.read_mib_s != null ? String(qb.read_mib_s) : '—';
+      const finDisp = (r.finished_at || '').replace('T', ' ').slice(0, 19);
+      const tr = document.createElement('tr');
+      tr.className = 'data-row';
+      tr.dataset.runId = r.run_id || '';
+      tr.innerHTML = [
+        '<td class="mono">', copyTextTargetSpan(escHtml(finDisp), finDisp), '</td>',
+        '<td>', copyTextTargetPlain(r.test_mode || ''), '</td>',
+        '<td class="' + resultClass(r.result) + '">', copyTextTargetPlain(r.result || ''), '</td>',
+        '<td class="mono">', copyTextTargetPlain(runDiskIdDisplay(r)), '</td>',
+        '<td class="mono cell-clip-mono">', idCell, '</td>',
+        '<td>', copyTextTargetPlain(displayPen(b.pen || '—')), '</td>',
+        '<td>', copyTextTargetBrandCell(b.brand), '</td>',
+        '<td>', copyTextTargetPlain(b.series), '</td>',
+        '<td class="mono">', copyTextTargetPlain(String((r.identity && r.identity.filesystem) || '—')), '</td>',
+        '<td class="mono">', copyTextTargetPlain(b.rate), '</td>',
+        '<td class="mono">', copyTextTargetPlain(b.cap, b.capTooltip || ''), '</td>',
+        '<td class="mono">', copyTextTargetPlain(qSample), '</td>',
+        '<td class="mono">', copyTextTargetPlain(qW), '</td>',
+        '<td class="mono">', copyTextTargetPlain(qR), '</td>',
+        '<td class="td-actions td-run-edit"><button type="button" class="btn-link row-edit-labels">Edit</button></td>',
+      ].join('');
+      const editBtn = tr.querySelector('.row-edit-labels');
+      editBtn.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        openLabelEditFromRun(r);
+      });
+      bindRowClickOpenDetail(tr, () => toggleRunDetail(r), false);
+      tb.appendChild(tr);
+    }
+    document.getElementById('shown').textContent = rows.length + ' row(s)';
+    if (detailSelection.kind === 'run' && detailSelection.id) {
+      const still = rows.some((x) => x.run_id === detailSelection.id);
+      if (!still) {
+        closeDetailPanel();
+      } else {
+        const tr = findRunRowEl(detailSelection.id);
+        if (tr) tr.classList.add('detail-selected');
+        const rec = rows.find((x) => x.run_id === detailSelection.id);
+        const panel = document.getElementById('detailPanel');
+        if (rec && panel && !panel.classList.contains('hidden')) {
+          document.getElementById('detailPanelBody').innerHTML = formatRunDetailHuman(rec);
+          document.getElementById('detailPanelRaw').textContent = JSON.stringify(rec, null, 2);
+        }
+      }
+    }
+  }
+
+  function applyFilter() {
+    const q = (document.getElementById('q').value || '').toLowerCase();
+    let rows = allRuns.slice();
+    if (q) rows = rows.filter(r => JSON.stringify(r).toLowerCase().includes(q));
+    rows = sortRunRows(rows);
+    if (runsViewMode === 'byId') fmtByIdRows(rows);
+    else fmtRows(rows);
+  }
+
+  function setRunsViewTab(mode) {
+    runsViewMode = mode === 'byId' ? 'byId' : 'all';
+    const isAll = runsViewMode === 'all';
+    const allTab = document.getElementById('tabRunsAll');
+    const idTab = document.getElementById('tabRunsById');
+    const panelAll = document.getElementById('runsViewAll');
+    const panelId = document.getElementById('runsViewById');
+    if (allTab) {
+      allTab.setAttribute('aria-selected', isAll ? 'true' : 'false');
+      allTab.tabIndex = isAll ? 0 : -1;
+    }
+    if (idTab) {
+      idTab.setAttribute('aria-selected', isAll ? 'false' : 'true');
+      idTab.tabIndex = isAll ? -1 : 0;
+    }
+    if (panelAll) panelAll.classList.toggle('hidden', !isAll);
+    if (panelId) panelId.classList.toggle('hidden', isAll);
+    applyFilter();
+  }
+
+  /** One row per fingerprint: labels from latest run; OK to use? from latest result (any mode). */
+  function fmtByIdRows(filteredSortedRuns) {
+    summarize(allRuns);
+    const tb = document.getElementById('runsByIdBody');
+    const empty = document.getElementById('emptyById');
+    const qv = (document.getElementById('q').value || '').trim();
+    if (!tb || !empty) return;
+    tb.innerHTML = '';
+    const groups = new Map();
+    for (const r of filteredSortedRuns) {
+      const fp = runFingerprintKey(r);
+      const key = fp || '__nofp__';
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(r);
+    }
+    const summaries = [];
+    for (const [, runs] of groups) {
+      const sorted = runs.slice().sort((a, b) => String(a.finished_at || '').localeCompare(String(b.finished_at || '')));
+      const key = runFingerprintKey(sorted[0]) || '__nofp__';
+      summaries.push({ key, latest: sorted[sorted.length - 1], count: sorted.length });
+    }
+    summaries.sort((a, b) => String(b.latest.finished_at || '').localeCompare(String(a.latest.finished_at || '')));
+
+    if (!summaries.length) {
+      empty.classList.remove('hidden');
+      document.getElementById('shown').textContent = allRuns.length && qv ? '0 match filter' : '';
+      if (detailSelection.kind === 'run' && detailSelection.id) {
+        const still = filteredSortedRuns.some((x) => x.run_id === detailSelection.id);
+        if (!still) closeDetailPanel();
+      }
+      return;
+    }
+    empty.classList.add('hidden');
+    for (const s of summaries) {
+      const r = s.latest;
+      const b = runIdentityBits(r);
+      const fpFull = s.key === '__nofp__' ? '' : s.key;
+      const idCell = fpFull
+        ? copyTextTargetSpan(escHtml(b.fp), displayFingerprintShort(fpFull), 'Full fingerprint · click to copy')
+        : copyTextTargetPlain('—');
+      const u = usablePhrase(r.result);
+      const finDisp = (r.finished_at || '').replace('T', ' ').slice(0, 19);
+      const idObj = r.identity || {};
+      const fsDisp = String(idObj.filesystem || '—');
+      const tr = document.createElement('tr');
+      tr.className = 'data-row';
+      tr.dataset.runId = r.run_id || '';
+      tr.innerHTML = [
+        '<td class="mono cell-clip-mono">', idCell, '</td>',
+        '<td>', copyTextTargetPlain(displayPen(b.pen || '—')), '</td>',
+        '<td>', copyTextTargetBrandCell(b.brand), '</td>',
+        '<td>', copyTextTargetPlain(b.series), '</td>',
+        '<td class="mono">', copyTextTargetPlain(fsDisp), '</td>',
+        '<td class="mono">', copyTextTargetPlain(b.rate), '</td>',
+        '<td class="mono">', copyTextTargetPlain(b.cap, b.capTooltip || ''), '</td>',
+        '<td class="' + u.cls + '">', copyTextTargetPlain(u.text), '</td>',
+        '<td class="mono">', copyTextTargetSpan(escHtml(finDisp), finDisp), '</td>',
+        '<td>', copyTextTargetPlain(formatTestMode(r.test_mode || '')), '</td>',
+        '<td class="' + resultClass(r.result) + '">', copyTextTargetPlain(r.result || ''), '</td>',
+        '<td class="mono">', copyTextTargetPlain(String(s.count)), '</td>',
+      ].join('');
+      bindRowClickOpenDetail(tr, () => toggleRunDetail(r), false);
+      tb.appendChild(tr);
+    }
+    document.getElementById('shown').textContent = summaries.length + ' ID(s)';
+
+    if (detailSelection.kind === 'run' && detailSelection.id) {
+      const still = filteredSortedRuns.some((x) => x.run_id === detailSelection.id);
+      if (!still) {
+        closeDetailPanel();
+      } else {
+        const tr = findRunRowEl(detailSelection.id);
+        if (tr) tr.classList.add('detail-selected');
+        const rec = filteredSortedRuns.find((x) => x.run_id === detailSelection.id);
+        const panel = document.getElementById('detailPanel');
+        if (rec && panel && !panel.classList.contains('hidden')) {
+          document.getElementById('detailPanelBody').innerHTML = formatRunDetailHuman(rec);
+          document.getElementById('detailPanelRaw').textContent = JSON.stringify(rec, null, 2);
+        }
+      }
+    }
+  }
+
+  async function loadRuns() {
+    const [rres, dres] = await Promise.all([
+      fetch('/api/runs'),
+      fetch('/api/devices'),
+    ]);
+    allRuns = await rres.json();
+    const devs = await dres.json();
+    deviceByFp = {};
+    for (const d of devs) {
+      if (d.fingerprint) deviceByFp[d.fingerprint] = d;
+    }
+    applyFilter();
+    updateRunCharts();
+    refreshSuggestData();
+    if (suggestState.input && suggestState.key) {
+      renderSuggestPanelContent(suggestState.input, suggestState.key);
+      positionSuggestPanel(suggestState.input);
+    }
+  }
+
+  function destroyChartIfAny(canvasId) {
+    const el = document.getElementById(canvasId);
+    if (!el || typeof Chart === 'undefined') return;
+    const c = Chart.getChart(el);
+    if (c) c.destroy();
+  }
+
+  function updateRunCharts() {
+    const emptyR = document.getElementById('chartResultsEmpty');
+    const emptyS = document.getElementById('chartSpeedsEmpty');
+    const canvasR = document.getElementById('chartResults');
+    const canvasS = document.getElementById('chartSpeeds');
+    if (!canvasR || !canvasS || typeof Chart === 'undefined') return;
+
+    destroyChartIfAny('chartResults');
+    destroyChartIfAny('chartSpeeds');
+
+    const runs = allRuns.slice().sort((a, b) => String(a.finished_at || '').localeCompare(String(b.finished_at || '')));
+    const accent = '#4f8ef7';
+
+    let pass = 0, fail = 0, err = 0;
+    for (const r of runs) {
+      if (r.result === 'pass') pass++;
+      else if (r.result === 'fail') fail++;
+      else err++;
+    }
+    const total = pass + fail + err;
+    if (!total) {
+      canvasR.classList.add('hidden');
+      if (emptyR) emptyR.classList.remove('hidden');
+    } else {
+      canvasR.classList.remove('hidden');
+      if (emptyR) emptyR.classList.add('hidden');
+      new Chart(canvasR, {
+        type: 'doughnut',
+        data: {
+          labels: ['pass', 'fail', 'error'],
+          datasets: [{
+            data: [pass, fail, err],
+            backgroundColor: ['rgba(61, 220, 132, 0.75)', 'rgba(247, 95, 95, 0.8)', 'rgba(247, 201, 72, 0.85)'],
+            borderColor: '#1a1d27',
+            borderWidth: 2,
+          }],
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: true,
+          plugins: {
+            legend: { position: 'bottom', labels: { color: '#b8bdd1', boxWidth: 12 } },
+          },
+        },
+      });
+    }
+
+    const benchPts = [];
+    for (const r of runs) {
+      if (!runHasThroughputForChart(r)) continue;
+      const qb = runQuickBench(r);
+      const lbl = (r.finished_at || '').replace('T', ' ').slice(5, 16);
+      benchPts.push({ label: lbl || '—', w: qb.write_mib_s, rd: qb.read_mib_s });
+    }
+    const cap = 48;
+    const slice = benchPts.length > cap ? benchPts.slice(-cap) : benchPts;
+    if (!slice.length) {
+      canvasS.classList.add('hidden');
+      if (emptyS) emptyS.classList.remove('hidden');
+    } else {
+      canvasS.classList.remove('hidden');
+      if (emptyS) emptyS.classList.add('hidden');
+      const readColor = '#3ddc84';
+      new Chart(canvasS, {
+        type: 'line',
+        data: {
+          labels: slice.map((p) => p.label),
+          datasets: [
+            {
+              label: 'Write MiB/s',
+              yAxisID: 'y',
+              data: slice.map((p) => p.w),
+              borderColor: accent,
+              backgroundColor: 'rgba(79, 142, 247, 0.15)',
+              tension: 0.2,
+              fill: false,
+              pointRadius: 3,
+              pointHoverRadius: 6,
+              borderWidth: 2,
+            },
+            {
+              label: 'Read MiB/s',
+              yAxisID: 'y1',
+              data: slice.map((p) => p.rd),
+              borderColor: readColor,
+              backgroundColor: 'rgba(61, 220, 132, 0.12)',
+              tension: 0.2,
+              fill: false,
+              pointRadius: 3,
+              pointHoverRadius: 6,
+              borderWidth: 2,
+            },
+          ],
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: true,
+          interaction: { mode: 'index', intersect: false },
+          scales: {
+            x: {
+              ticks: { color: '#7a8099', maxRotation: 45, minRotation: 0 },
+              grid: { color: 'rgba(42, 45, 58, 0.9)' },
+            },
+            y: {
+              type: 'linear',
+              position: 'left',
+              beginAtZero: true,
+              ticks: { color: '#7a8099' },
+              grid: { color: 'rgba(42, 45, 58, 0.9)' },
+              title: {
+                display: true,
+                text: 'Write MiB/s',
+                color: accent,
+                font: { size: 11, weight: '600' },
+              },
+            },
+            y1: {
+              type: 'linear',
+              position: 'right',
+              beginAtZero: true,
+              ticks: { color: '#7a8099' },
+              grid: { drawOnChartArea: false },
+              title: {
+                display: true,
+                text: 'Read MiB/s',
+                color: readColor,
+                font: { size: 11, weight: '600' },
+              },
+            },
+          },
+          plugins: {
+            legend: { labels: { color: '#b8bdd1' } },
+            tooltip: {
+              mode: 'index',
+              intersect: false,
+              backgroundColor: 'rgba(26, 29, 39, 0.95)',
+              titleColor: '#e2e6f0',
+              bodyColor: '#b8bdd1',
+              borderColor: 'rgba(42, 45, 58, 0.9)',
+              borderWidth: 1,
+            },
+          },
+        },
+      });
+    }
+  }
+
+  function setMountPath(path) {
+    const el = document.getElementById('mount');
+    el.value = path || '';
+    el.focus();
+  }
+
+  /** When exactly one mounted removable volume exists, pre-fill Quick test if mount is still empty. */
+  function autofillQuickMountIfSingle(sortedOk) {
+    const mounted = sortedOk.filter((r) => r.mount_point && String(r.mount_point).trim());
+    if (mounted.length !== 1) return;
+    const el = document.getElementById('mount');
+    if (!el) return;
+    const onlyMount = String(mounted[0].mount_point).trim();
+    const cur = (el.value || '').trim();
+    if (!cur) {
+      el.value = onlyMount;
+      return;
+    }
+    // If current mount is stale/unmounted after card swap, auto-switch to the only mounted card.
+    const stillMounted = mounted.some((r) => String(r.mount_point || '').trim() === cur);
+    if (!stillMounted) {
+      el.value = onlyMount;
+    }
+  }
+
+  function showNewDeviceModal(row) {
+    modalMount = row.mount_point || '';
+    const capShow = row.capacity_label || '—';
+    const capTip = row.capacity_tooltip ? String(row.capacity_tooltip) : '';
+    const lines = [
+      '<div><strong>Type:</strong> <span class="mono">' + (row.media_type_label || row.media_type || '—') + '</span></div>',
+      '<div><strong>Size:</strong> <span class="mono">' + copyTextTargetPlain(capShow, capTip) + '</span></div>',
+      '<div><strong>Brand / series:</strong> ' + [row.display_brand || row.brand, row.display_series || row.series].filter(Boolean).join(' · ') + '</div>',
+      '<div><strong>Name on card:</strong> ' + displayPen(row.display_pen_name || '—') + '</div>',
+      '<div><strong>Fingerprint:</strong> <span class="mono">' + displayFingerprintShort(row.fingerprint_short || '') + '</span></div>',
+      '<div><strong>Mount:</strong> <span class="mono">' + (displayMount(modalMount) || '(not mounted)') + '</span></div>'
+    ].join('');
+    document.getElementById('newDevDetail').innerHTML = lines;
+    document.getElementById('newDevModal').classList.remove('hidden');
+  }
+
+  function closeNewDeviceModal() {
+    document.getElementById('newDevModal').classList.add('hidden');
+    modalMount = '';
+  }
+
+  function closeLabelEditModal() {
+    closeSuggestPanel();
+    document.getElementById('labelEditModal').classList.add('hidden');
+  }
+
+  function openLabelEditModal(opts) {
+    const fp = opts.fingerprint;
+    if (!fp) {
+      setMsg('No device id — cannot save labels.', 'err', { autoHideMs: 6000 });
+      return;
+    }
+    document.getElementById('editLabelFp').value = fp;
+    document.getElementById('editLabelContext').textContent = opts.diskHint || '';
+    document.getElementById('editLabelPen').value = opts.pen || '';
+    document.getElementById('editLabelBrand').value = opts.brand || '';
+    document.getElementById('editLabelSeries').value = opts.series || '';
+    document.getElementById('editLabelNotes').value = opts.user_notes || '';
+    document.getElementById('labelEditModal').classList.remove('hidden');
+  }
+
+  function openLabelEditFromRun(r) {
+    const id = r.identity || {};
+    const fp = runFingerprintKey(r);
+    if (!fp) {
+      setMsg('This run has no device fingerprint — refresh removable drives or run a quick test again.', 'err', { autoHideMs: 8000 });
+      return;
+    }
+    const dev = deviceByFp[fp];
+    const ex = id.extra && typeof id.extra === 'object' ? id.extra : {};
+    const disk = displayDisk(normalizeDiskId(ex.device_identifier || '') || '—');
+    const mount = displayMount(r.mount_point || '—');
+    const shortId = displayFingerprintShort(fp.slice(0, 12) || id.fingerprint_short || '');
+    const infBrand = id.brand != null && String(id.brand).trim() ? String(id.brand).trim() : '';
+    const infSeries = id.series != null && String(id.series).trim() ? String(id.series).trim() : '';
+    openLabelEditModal({
+      fingerprint: fp,
+      diskHint: 'OS disk: ' + disk + ' · Mount: ' + mount + ' · Short ID: ' + shortId,
+      pen: dev ? (dev.user_label || '') : ((id.volume_name || '').trim() || ''),
+      brand: dev ? (dev.user_brand || '') : infBrand,
+      series: dev ? (dev.user_series || '') : infSeries,
+      user_notes: dev ? (dev.user_notes || '') : '',
+    });
+  }
+
+  function openLabelEditFromCandidateRow(tr) {
+    const fp = tr && tr.dataset ? tr.dataset.fingerprint : '';
+    if (!fp) return;
+    const row = lastCandidates.find((x) => x.fingerprint === fp && !x.error);
+    const dev = deviceByFp[fp];
+    const disk = row ? candidateDiskIdDisplay(row) : '—';
+    const mount = displayMount(row && row.mount_point ? row.mount_point : '—');
+    const shortId = displayFingerprintShort(row && row.fingerprint_short ? row.fingerprint_short : '');
+    openLabelEditModal({
+      fingerprint: fp,
+      diskHint: 'OS disk: ' + disk + ' · Mount: ' + mount + ' · Short ID: ' + shortId,
+      pen: dev ? (dev.user_label || '') : (row && row.user_label) || '',
+      brand: dev ? (dev.user_brand || '') : (row && row.user_brand) || '',
+      series: dev ? (dev.user_series || '') : (row && row.user_series) || '',
+      user_notes: dev ? (dev.user_notes || '') : (row && row.user_notes) || '',
+    });
+  }
+
+  async function saveLabelEditModal() {
+    const fp = document.getElementById('editLabelFp').value.trim();
+    if (!fp) return;
+    const pen = document.getElementById('editLabelPen').value.trim();
+    const brand = document.getElementById('editLabelBrand').value.trim();
+    const series = document.getElementById('editLabelSeries').value.trim();
+    const notes = document.getElementById('editLabelNotes').value.trim();
+    try {
+      const res = await fetch('/api/devices/prefs', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          fingerprint: fp,
+          user_label: pen,
+          user_brand: brand,
+          user_series: series,
+          user_notes: notes,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setMsg((data.detail && JSON.stringify(data.detail)) || 'Save failed', 'err', { autoHideMs: 10000 });
+        return;
+      }
+      setMsg('Saved device labels.', 'ok', { autoHideMs: 3500 });
+      closeLabelEditModal();
+      closeSuggestPanel();
+      await loadRuns();
+      await pollCandidates();
+    } catch (e) {
+      setMsg(String(e), 'err', { autoHideMs: 8000 });
+    }
+  }
+
+  const suggestData = {
+    mount: [],
+    pen: [],
+    brand: COMMON_BRANDS.slice(),
+    series: COMMON_CARD_SERIES.slice(),
+    notes: [],
+  };
+
+  let suggestState = { input: null, key: null, activeIndex: -1, filteredItems: [] };
+
+  function uniqueSuggestStrings(arr) {
+    const seen = new Set();
+    const out = [];
+    for (const v of arr) {
+      const s = String(v || '').trim();
+      if (!s) continue;
+      const k = s.toLowerCase();
+      if (seen.has(k)) continue;
+      seen.add(k);
+      out.push(s);
+    }
+    return out;
+  }
+
+  function refreshSuggestData() {
+    const mounts = [];
+    for (const r of lastCandidates) {
+      if (!r.error && r.mount_point) mounts.push(r.mount_point);
+    }
+    suggestData.mount = uniqueSuggestStrings(mounts);
+
+    const pens = [];
+    const brands = [...COMMON_BRANDS];
+    const series = [...COMMON_CARD_SERIES];
+    const notes = [];
+    for (const d of Object.values(deviceByFp)) {
+      if (d.user_label && String(d.user_label).trim()) pens.push(String(d.user_label).trim());
+      if (d.user_brand && String(d.user_brand).trim()) brands.push(String(d.user_brand).trim());
+      if (d.user_series && String(d.user_series).trim()) series.push(String(d.user_series).trim());
+      if (d.user_notes && String(d.user_notes).trim()) notes.push(String(d.user_notes).trim().slice(0, 120));
+    }
+    suggestData.pen = uniqueSuggestStrings(pens);
+    suggestData.brand = uniqueSuggestStrings(brands);
+    suggestData.series = uniqueSuggestStrings(series);
+    suggestData.notes = uniqueSuggestStrings(notes);
+  }
+
+  function onWindowScrollCloseSuggestIfPageMoved(ev) {
+    const t = ev.target;
+    const p = document.getElementById('suggestPanel');
+    if (p && t === p) return;
+    if (t === document || t === document.documentElement || t === document.body) {
+      closeSuggestPanel();
+      return;
+    }
+    const main = document.querySelector('.main-scroll');
+    if (main && t === main) closeSuggestPanel();
+  }
+
+  function closeSuggestPanel() {
+    const p = document.getElementById('suggestPanel');
+    if (!p) return;
+    p.classList.add('hidden');
+    p.innerHTML = '';
+    window.removeEventListener('scroll', onWindowScrollCloseSuggestIfPageMoved, true);
+    window.removeEventListener('resize', closeSuggestPanel);
+    suggestState = { input: null, key: null, activeIndex: -1, filteredItems: [] };
+  }
+
+  function positionSuggestPanel(input) {
+    const p = document.getElementById('suggestPanel');
+    if (!p || !input) return;
+    const r = input.getBoundingClientRect();
+    const vw = window.innerWidth;
+    const w = Math.min(Math.max(r.width, 200), 320);
+    let left = r.left;
+    if (left + w > vw - 8) left = Math.max(8, vw - w - 8);
+    if (left < 8) left = 8;
+    p.style.left = left + 'px';
+    p.style.top = (r.bottom + 4) + 'px';
+    p.style.width = w + 'px';
+  }
+
+  function renderSuggestPanelContent(input, key) {
+    const p = document.getElementById('suggestPanel');
+    if (!p) return;
+    const raw = suggestData[key] || [];
+    const q = (input.value || '').toLowerCase().trim();
+    let items = uniqueSuggestStrings(raw);
+    if (q) items = items.filter((s) => s.toLowerCase().includes(q));
+    if (key === 'series') {
+      const brandCtx = brandContextForSeriesInput(input);
+      const hintKey = brandCtx ? seriesBrandHintKey(brandCtx) : '';
+      if (hintKey) items = filterSeriesItemsForBrand(items, hintKey);
+      items = orderSeriesSuggestions(items, brandCtx);
+    }
+    const maxItems = 40;
+    items = items.slice(0, maxItems);
+    suggestState.filteredItems = items;
+    suggestState.activeIndex = -1;
+    p.innerHTML = '';
+    if (!items.length) {
+      const empty = document.createElement('div');
+      empty.className = 'suggest-empty';
+      empty.textContent = q ? 'No matches — keep typing or edit freely.' : 'No saved suggestions yet.';
+      p.appendChild(empty);
+      return;
+    }
+    for (let i = 0; i < items.length; i++) {
+      const s = items[i];
+      const div = document.createElement('div');
+      div.className = 'suggest-item';
+      div.setAttribute('role', 'option');
+      div.textContent = s;
+      div.addEventListener('mousedown', (ev) => {
+        ev.preventDefault();
+        input.value = s;
+        closeSuggestPanel();
+        input.focus();
+      });
+      p.appendChild(div);
+    }
+  }
+
+  function refreshSuggestActiveHighlight() {
+    const p = document.getElementById('suggestPanel');
+    if (!p || p.classList.contains('hidden')) return;
+    const nodes = p.querySelectorAll('.suggest-item');
+    const idx = suggestState.activeIndex;
+    nodes.forEach((n, i) => n.classList.toggle('suggest-active', i === idx));
+    const el = nodes[idx];
+    if (el) el.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }
+
+  function openSuggestPanel(input, key) {
+    if (suggestState.input && suggestState.input !== input) closeSuggestPanel();
+    suggestState = { input, key, activeIndex: -1, filteredItems: [] };
+    const p = document.getElementById('suggestPanel');
+    p.classList.remove('hidden');
+    positionSuggestPanel(input);
+    renderSuggestPanelContent(input, key);
+    window.addEventListener('scroll', onWindowScrollCloseSuggestIfPageMoved, true);
+    window.addEventListener('resize', closeSuggestPanel);
+  }
+
+  (function bindSuggestPanelWheelGuard() {
+    const el = document.getElementById('suggestPanel');
+    if (!el || el.dataset.wheelGuard) return;
+    el.dataset.wheelGuard = '1';
+    el.addEventListener(
+      'wheel',
+      (e) => {
+        if (el.classList.contains('hidden')) return;
+        const maxScroll = el.scrollHeight - el.clientHeight;
+        if (maxScroll <= 0) {
+          e.preventDefault();
+          e.stopPropagation();
+          return;
+        }
+        const next = el.scrollTop + e.deltaY;
+        const clamped = Math.max(0, Math.min(maxScroll, next));
+        el.scrollTop = clamped;
+        e.preventDefault();
+        e.stopPropagation();
+      },
+      { passive: false }
+    );
+  })();
+
+  document.addEventListener('focusin', (ev) => {
+    const t = ev.target;
+    if (!t || t.tagName !== 'INPUT') return;
+    const key = t.getAttribute('data-suggest');
+    if (!key) return;
+    openSuggestPanel(t, key);
+  });
+
+  document.addEventListener('input', (ev) => {
+    const t = ev.target;
+    if (t !== suggestState.input) return;
+    const key = t.getAttribute('data-suggest');
+    if (!key) return;
+    renderSuggestPanelContent(t, key);
+    positionSuggestPanel(t);
+  }, true);
+
+  /** Capture phase: arrow/enter must run before the focused input applies caret movement. */
+  document.addEventListener('keydown', (ev) => {
+    const sugPanel = document.getElementById('suggestPanel');
+    if (
+      !sugPanel ||
+      sugPanel.classList.contains('hidden') ||
+      !suggestState.input ||
+      document.activeElement !== suggestState.input
+    ) {
+      return;
+    }
+    if (ev.key === 'Tab') {
+      closeSuggestPanel();
+      return;
+    }
+    const items = suggestState.filteredItems || [];
+    if (items.length && (ev.key === 'ArrowDown' || ev.key === 'ArrowUp')) {
+      ev.preventDefault();
+      if (ev.key === 'ArrowDown') {
+        if (suggestState.activeIndex < 0) suggestState.activeIndex = 0;
+        else suggestState.activeIndex = (suggestState.activeIndex + 1) % items.length;
+      } else {
+        if (suggestState.activeIndex < 0) suggestState.activeIndex = items.length - 1;
+        else suggestState.activeIndex = (suggestState.activeIndex - 1 + items.length) % items.length;
+      }
+      refreshSuggestActiveHighlight();
+      return;
+    }
+    if (ev.key === 'Enter' && items.length && suggestState.activeIndex >= 0) {
+      ev.preventDefault();
+      const pick = items[suggestState.activeIndex];
+      const inp = suggestState.input;
+      inp.value = pick;
+      closeSuggestPanel();
+      inp.focus();
+    }
+  }, true);
+
+  document.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Escape') {
+      const ecm = document.getElementById('ejectConfirmModal');
+      if (ecm && !ecm.classList.contains('hidden')) {
+        closeEjectConfirmModal(false);
+        ev.preventDefault();
+        return;
+      }
+      const rcm = document.getElementById('repairConfirmModal');
+      if (rcm && !rcm.classList.contains('hidden')) {
+        closeRepairConfirmModal(false);
+        ev.preventDefault();
+        return;
+      }
+      const lem = document.getElementById('labelEditModal');
+      if (lem && !lem.classList.contains('hidden')) {
+        closeLabelEditModal();
+        ev.preventDefault();
+        return;
+      }
+      const dp = document.getElementById('detailPanel');
+      if (dp && !dp.classList.contains('hidden')) {
+        closeDetailPanel();
+        ev.preventDefault();
+        return;
+      }
+      closeSuggestPanel();
+      return;
+    }
+    const mod = ev.metaKey || ev.ctrlKey;
+    if (mod && (ev.key === 'c' || ev.key === 'C') && !ev.shiftKey) {
+      const t = ev.target;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+      const sel = window.getSelection && window.getSelection();
+      if (sel && String(sel.toString() || '').trim()) return;
+      const runRec = getSelectedRunRecord();
+      const candRec = getSelectedCandRecord();
+      let line = '';
+      if (detailSelection.kind === 'cand' && candRec) line = candRowAsTsv(candRec);
+      else if (detailSelection.kind === 'run' && runRec) line = runRowAsTsv(runRec);
+      else if (runRec) line = runRowAsTsv(runRec);
+      else if (candRec) line = candRowAsTsv(candRec);
+      if (line) {
+        ev.preventDefault();
+        copyTextWithToast(line, { maxPreviewLen: 120 }).then((ok) => {
+          if (ok) clearTextSelection();
+        });
+      }
+    }
+  });
+
+  document.getElementById('detailPanelClose').addEventListener('click', () => closeDetailPanel());
+
+  /** True if event is on #suggestPanel (including native scrollbar: target may be wrong). */
+  function isPointerOnSuggestPanel(ev) {
+    const p = document.getElementById('suggestPanel');
+    if (!p || p.classList.contains('hidden')) return false;
+    if (ev.target === p || p.contains(ev.target)) return true;
+    try {
+      const path = typeof ev.composedPath === 'function' ? ev.composedPath() : [];
+      if (path && path.indexOf(p) !== -1) return true;
+    } catch (_) { /* ignore */ }
+    try {
+      if (Number.isFinite(ev.clientX) && Number.isFinite(ev.clientY)) {
+        const hit = document.elementFromPoint(ev.clientX, ev.clientY);
+        if (hit && (hit === p || p.contains(hit))) return true;
+      }
+    } catch (_) { /* ignore */ }
+    return false;
+  }
+
+  document.addEventListener('click', (ev) => {
+    const panel = document.getElementById('detailPanel');
+    if (!panel || panel.classList.contains('hidden')) return;
+    queueMicrotask(() => {
+      const p2 = document.getElementById('detailPanel');
+      if (!p2 || p2.classList.contains('hidden')) return;
+      if (p2.contains(ev.target)) return;
+      if (ev.target.closest('#tableRuns') || ev.target.closest('#tableRunsById') || ev.target.closest('#tableCandidates')) return;
+      if (isPointerOnSuggestPanel(ev)) return;
+      const lem = document.getElementById('labelEditModal');
+      if (lem && !lem.classList.contains('hidden') && lem.contains(ev.target)) return;
+      const rcm = document.getElementById('repairConfirmModal');
+      if (rcm && !rcm.classList.contains('hidden') && rcm.contains(ev.target)) return;
+      const ecm = document.getElementById('ejectConfirmModal');
+      if (ecm && !ecm.classList.contains('hidden') && ecm.contains(ev.target)) return;
+      closeDetailPanel();
+    });
+  });
+
+  document.getElementById('labelEditCancel').addEventListener('click', () => closeLabelEditModal());
+  document.getElementById('labelEditSave').addEventListener('click', () => saveLabelEditModal());
+  document.getElementById('labelEditModal').addEventListener('click', (ev) => {
+    if (ev.target.id === 'labelEditModal') closeLabelEditModal();
+  });
+
+  document.getElementById('repairConfirmCancel').addEventListener('click', () => closeRepairConfirmModal(false));
+  document.getElementById('repairConfirmOk').addEventListener('click', () => closeRepairConfirmModal(true));
+  document.getElementById('repairConfirmModal').addEventListener('click', (ev) => {
+    if (ev.target.id === 'repairConfirmModal') closeRepairConfirmModal(false);
+  });
+
+  document.getElementById('ejectConfirmCancel').addEventListener('click', () => closeEjectConfirmModal(false));
+  document.getElementById('ejectConfirmOk').addEventListener('click', () => closeEjectConfirmModal(true));
+  document.getElementById('ejectConfirmModal').addEventListener('click', (ev) => {
+    if (ev.target.id === 'ejectConfirmModal') closeEjectConfirmModal(false);
+  });
+
+  document.getElementById('editLabelBrand').addEventListener('input', () => {
+    const sp = document.getElementById('suggestPanel');
+    if (
+      suggestState.input &&
+      suggestState.key === 'series' &&
+      sp &&
+      !sp.classList.contains('hidden')
+    ) {
+      renderSuggestPanelContent(suggestState.input, 'series');
+      positionSuggestPanel(suggestState.input);
+    }
+  });
+
+  document.addEventListener('mousedown', (ev) => {
+    const p = document.getElementById('suggestPanel');
+    if (!p || p.classList.contains('hidden')) return;
+    if (ev.target === suggestState.input) return;
+    if (isPointerOnSuggestPanel(ev)) return;
+    closeSuggestPanel();
+  });
+
+  function renderCandidates(rows) {
+    const tb = document.getElementById('candBody');
+    const empty = document.getElementById('candEmpty');
+    tb.innerHTML = '';
+    const ok = rows.filter(r => !r.error);
+    if (!ok.length) {
+      empty.classList.remove('hidden');
+      if (rows.length && rows[0].error) {
+        empty.textContent = rows[0].error + (rows[0].stderr ? ': ' + rows[0].stderr : '');
+      } else {
+        empty.textContent = 'No removable volumes detected.';
+      }
+      return;
+    }
+    empty.classList.add('hidden');
+    const sorted = sortCandRows(ok);
+    for (let i = 0; i < sorted.length; i++) {
+      const r = sorted[i];
+      const ord = i + 1;
+      const tagInner = r.known_device
+        ? '<span class="tag tag-known">Known</span>'
+        : '<span class="tag tag-new">New</span>';
+      const tagCopyLabel = r.known_device ? 'Known' : 'New';
+      const tr = document.createElement('tr');
+      tr.className = 'click-row';
+      tr.dataset.fingerprint = r.fingerprint || '';
+      const mount = displayMount(r.mount_point || '');
+      const penShow = displayPen((r.user_label || '').trim() || (r.display_pen_name || '').trim() || '—');
+      const brShow = displayBrand((r.display_brand || r.user_brand || '').trim() || '—');
+      const serShow = displaySeries((r.display_series || r.user_series || '').trim() || '—');
+      const noteShow = displayNotes((r.user_notes || '').trim() || '—');
+      const ratedShow = (r.capacity_nominal_label || '').trim() || '—';
+      const osShow = String((r.capacity_os_label || r.capacity_label || '—')).trim() || '—';
+      const osTip = r.capacity_tooltip ? String(r.capacity_tooltip) : '';
+      const fpFull = r.fingerprint || '';
+      const fpDisp = candidateFingerprintShortDisplay(r);
+      const idCell = fpFull
+        ? copyTextTargetSpan(escHtml(fpDisp), displayFingerprintShort(fpFull), 'Full fingerprint · click to copy')
+        : copyTextTargetPlain(fpDisp);
+      tr.innerHTML = [
+        '<td class="mono">', copyTextTargetPlain(String(ord)), '</td>',
+        '<td class="mono">', copyTextTargetPlain(mount || '—'), '</td>',
+        '<td class="mono">', copyTextTargetPlain(candidateDiskIdDisplay(r)), '</td>',
+        '<td class="mono cell-clip-mono">', idCell, '</td>',
+        '<td>', copyTextTargetPlain(penShow), '</td>',
+        '<td>', copyTextTargetBrandCell(brShow), '</td>',
+        '<td>', copyTextTargetPlain(serShow), '</td>',
+        '<td class="mono">', copyTextTargetPlain(String(r.filesystem || '—')), '</td>',
+        '<td class="mono">', copyTextTargetPlain(osShow, osTip), '</td>',
+        '<td class="mono">', copyTextTargetPlain(ratedShow), '</td>',
+        '<td>', copyTextTargetPlain(String(r.media_type_label || r.media_type || '—')), '</td>',
+        '<td class="cell-wide">', copyTextTargetPlain(noteShow), '</td>',
+        '<td>', copyTextTargetSpan(tagInner, tagCopyLabel), '</td>',
+        '<td class="td-actions">',
+        '<button type="button" class="btn-link row-edit-cand">Edit</button> ',
+        '<button type="button" class="btn-link use-mount" data-fp="',
+        encodeURIComponent(r.fingerprint || ''),
+        '" data-mount="', encodeURIComponent(r.mount_point || ''), '">Use</button>',
+        platformDiskutilAvailable && r.device
+          ? ' <button type="button" class="btn-link row-eject-cand" data-device="' +
+            escAttr(String(r.device)) +
+            '">Eject</button>'
+          : '',
+        '</td>',
+      ].join('');
+      bindRowClickOpenDetail(tr, () => toggleCandidateDetail(r), false);
+      tb.appendChild(tr);
+    }
+    if (detailSelection.kind === 'cand' && detailSelection.id) {
+      const still = sorted.some((x) => x.fingerprint === detailSelection.id);
+      if (!still) {
+        closeDetailPanel();
+      } else {
+        const tr = findCandRowEl(detailSelection.id);
+        if (tr) tr.classList.add('detail-selected');
+        const rec = sorted.find((x) => x.fingerprint === detailSelection.id);
+        const panel = document.getElementById('detailPanel');
+        if (rec && panel && !panel.classList.contains('hidden')) {
+          document.getElementById('detailPanelBody').innerHTML = formatCandidateDetailHuman(rec);
+          document.getElementById('detailPanelRaw').textContent = JSON.stringify(rec, null, 2);
+        }
+      }
+    }
+    tb.querySelectorAll('.use-mount').forEach((btn) => {
+      btn.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        const m = decodeURIComponent(btn.getAttribute('data-mount') || '');
+        if (m) setMountPath(m);
+      });
+    });
+    tb.querySelectorAll('.row-edit-cand').forEach((btn) => {
+      btn.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        const tr = btn.closest('tr');
+        openLabelEditFromCandidateRow(tr);
+      });
+    });
+    tb.querySelectorAll('.row-eject-cand').forEach((btn) => {
+      btn.addEventListener('click', async (ev) => {
+        ev.stopPropagation();
+        const dev = btn.getAttribute('data-device') || '';
+        if (!dev) return;
+        const ok = await openEjectConfirmModal(dev);
+        if (!ok) return;
+        try {
+          const res = await fetch('/api/eject', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ device: dev }),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            setMsg(messageFromApiError(res, data), 'err', { autoHideMs: 12000 });
+            return;
+          }
+          if (!data.ok) {
+            const msg =
+              (data.detail && String(data.detail).trim().slice(0, 600)) ||
+              data.message ||
+              'Eject failed';
+            setMsg(msg, 'err', { autoHideMs: 12000 });
+            return;
+          }
+          setMsg(data.message || 'Ejected.', 'ok', { autoHideMs: 5000 });
+          await pollCandidates();
+        } catch (e) {
+          setMsg(String(e), 'err', { autoHideMs: 8000 });
+        }
+      });
+    });
+    autofillQuickMountIfSingle(sorted);
+  }
+
+  async function pollCandidates() {
+    try {
+      const res = await fetch('/api/candidates');
+      const rows = await res.json();
+      lastCandidates = rows;
+      renderCandidates(rows);
+      refreshSuggestData();
+      if (suggestState.input && suggestState.key) {
+        renderSuggestPanelContent(suggestState.input, suggestState.key);
+        positionSuggestPanel(suggestState.input);
+      }
+      const fps = new Set();
+      for (const r of rows) {
+        if (!r.error && r.fingerprint) fps.add(r.fingerprint);
+      }
+      if (prevCandFingerprints !== null) {
+        for (const fp of fps) {
+          if (!prevCandFingerprints.has(fp)) {
+            const row = rows.find(x => x.fingerprint === fp && !x.error);
+            if (row && !row.known_device) {
+              showNewDeviceModal(row);
+              break;
+            }
+          }
+        }
+      }
+      prevCandFingerprints = fps;
+      // Candidate fingerprints can canonicalize run IDs (mount+disk mapping).
+      applyFilter();
+    } catch (_) { /* ignore poll errors */ }
+  }
+
+  document.getElementById('newDevDismiss').addEventListener('click', closeNewDeviceModal);
+  document.getElementById('newDevUse').addEventListener('click', () => {
+    if (modalMount) setMountPath(modalMount);
+    closeNewDeviceModal();
+  });
+  document.getElementById('newDevModal').addEventListener('click', (ev) => {
+    if (ev.target.id === 'newDevModal') closeNewDeviceModal();
+  });
+  document.getElementById('btnDemoMode').addEventListener('click', () => setDemoMode(!demoMode));
+
+  document.getElementById('q').addEventListener('input', applyFilter);
+  document.getElementById('btnPrint').addEventListener('click', () => window.print());
+
+  async function loadPlatform() {
+    const staleEl = document.getElementById('staleServerWarn');
+    let diskutilAvailable = false;
+    try {
+      const r = await fetch('/api/platform');
+      const p = await r.json();
+      diskutilAvailable = !!p.diskutil_verify_available;
+      platformDiskutilAvailable = diskutilAvailable;
+      const vbtn = document.getElementById('btnVerifyVol');
+      const rbtn = document.getElementById('btnRepairVol');
+      if (vbtn) vbtn.classList.toggle('hidden', !diskutilAvailable);
+      if (rbtn) rbtn.classList.toggle('hidden', !diskutilAvailable);
+    } catch (_) { /* ignore */ }
+    try {
+      const hr = await fetch('/api/health');
+      const h = await hr.json().catch(() => ({}));
+      if (staleEl) {
+        let staleMsg = '';
+        if (h.post_json !== 'read_body') {
+          staleMsg =
+            'Server is older than this page: JSON POSTs will fail until you restart the API from your updated project (e.g. stop storage-health serve, then run it again from this repo, or pip install -e .).';
+        } else if (
+          diskutilAvailable &&
+          (!healthCapabilityTrue(h.has_repair_volume_post) ||
+            !healthCapabilityTrue(h.has_eject_post))
+        ) {
+          staleMsg =
+            'This API predates diskutil actions: restart storage-health from this repo (pip install -e .) so /api/eject and /api/test/repair-volume are registered.';
+        }
+        if (staleMsg) {
+          staleEl.textContent = staleMsg;
+          staleEl.classList.remove('hidden');
+        } else {
+          staleEl.classList.add('hidden');
+          staleEl.textContent = '';
+        }
+      }
+      const meta = document.getElementById('serverMeta');
+      if (meta && h.status === 'ok' && typeof h.uptime_sec === 'number') {
+        const iso = (h.server_time_utc || '').replace('T', ' ').slice(0, 19);
+        meta.textContent = demoMode
+          ? 'API up ' + fmtDuration(h.uptime_sec) + ' · (timestamp hidden in demo mode)'
+          : 'API up ' + fmtDuration(h.uptime_sec) + ' · ' + iso + ' UTC';
+        meta.title = 'Uptime since this storage-health process started.';
+      }
+    } catch (_) { /* ignore */ }
+  }
+
+  document.getElementById('btnRepairVol').addEventListener('click', async () => {
+    const mount = document.getElementById('mount').value.trim();
+    if (!mount) { setMsg('Enter a mount path.', 'err', { autoHideMs: 5000 }); return; }
+    const ok = await openRepairConfirmModal();
+    if (!ok) return;
+    setMsg('Running First Aid repair (diskutil repairVolume; saved as a repair run; may take several minutes)…', '');
+    startRunTimer('First Aid repair');
+    const rbtn = document.getElementById('btnRepairVol');
+    rbtn.disabled = true;
+    try {
+      const res = await fetch('/api/test/repair-volume', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mount }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setMsg(messageFromApiError(res, data), 'err', { autoHideMs: 14000 });
+        return;
+      }
+      const cls = data.result === 'pass' ? 'ok' : 'err';
+      let tail = '';
+      if (data.error_detail) {
+        const lines = String(data.error_detail).trim().split('\n');
+        tail = ' — ' + lines.slice(-2).join(' ').slice(0, 500);
+      }
+      setMsg('Done: ' + (data.result || '') + ' — ' + (data.summary || 'done').slice(0, 220) + tail, cls, { autoHideMs: 9000 });
+      await loadRuns();
+      await pollCandidates();
+    } catch (e) {
+      setMsg(String(e), 'err', { autoHideMs: 10000 });
+    } finally {
+      stopRunTimer();
+      rbtn.disabled = false;
+    }
+  });
+
+  document.getElementById('btnVerifyVol').addEventListener('click', async () => {
+    const mount = document.getElementById('mount').value.trim();
+    if (!mount) { setMsg('Enter a mount path.', 'err', { autoHideMs: 5000 }); return; }
+    setMsg('Running diskutil verifyVolume (saved as a verify run; may take several minutes)…', '');
+    startRunTimer('Verify only');
+    const vbtn = document.getElementById('btnVerifyVol');
+    vbtn.disabled = true;
+    try {
+      const res = await fetch('/api/test/verify-volume', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mount }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setMsg(messageFromApiError(res, data), 'err', { autoHideMs: 14000 });
+        return;
+      }
+      const cls = data.result === 'pass' ? 'ok' : 'err';
+      let tail = '';
+      if (data.error_detail) {
+        const lines = String(data.error_detail).trim().split('\n');
+        tail = ' — ' + lines.slice(-2).join(' ').slice(0, 500);
+      }
+      setMsg('Done: ' + (data.result || '') + ' — ' + (data.summary || 'done').slice(0, 220) + tail, cls, { autoHideMs: 9000 });
+      await loadRuns();
+      await pollCandidates();
+    } catch (e) {
+      setMsg(String(e), 'err', { autoHideMs: 10000 });
+    } finally {
+      stopRunTimer();
+      vbtn.disabled = false;
+    }
+  });
+
+  document.getElementById('btnRefresh').addEventListener('click', () => {
+    setMsg('');
+    loadPlatform();
+    loadRuns();
+    pollCandidates();
+  });
+
+  document.getElementById('btnQuick').addEventListener('click', async () => {
+    const mount = document.getElementById('mount').value.trim();
+    const notes = document.getElementById('notes').value.trim() || null;
+    const sample_mib = Math.min(512, Math.max(1, parseInt(document.getElementById('sampleMiB').value, 10) || 4));
+    if (!mount) { setMsg('Enter a mount path.', 'err', { autoHideMs: 5000 }); return; }
+    setMsg('Running…', '');
+    startRunTimer('Quick test');
+    document.getElementById('btnQuick').disabled = true;
+    try {
+      const res = await fetch('/api/test/quick', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mount, notes, sample_mib })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setMsg(messageFromApiError(res, data), 'err', { autoHideMs: 14000 });
+        return;
+      }
+      setMsg('Done: ' + (data.result || '') + ' — ' + (data.summary || '').slice(0, 200), 'ok', { autoHideMs: 8000 });
+      await loadRuns();
+      await pollCandidates();
+    } catch (e) {
+      setMsg(String(e), 'err', { autoHideMs: 10000 });
+    } finally {
+      stopRunTimer();
+      document.getElementById('btnQuick').disabled = false;
+    }
+  });
+
+  document.getElementById('btnCamStress').addEventListener('click', async () => {
+    const mount = document.getElementById('mount').value.trim();
+    const notes = document.getElementById('notes').value.trim() || null;
+    const duration_min = Math.min(240, Math.max(1, parseInt(document.getElementById('stressMin').value, 10) || 20));
+    const profile = (document.getElementById('stressProfile').value || '').trim() || null;
+    if (!mount) { setMsg('Enter a mount path.', 'err', { autoHideMs: 5000 }); return; }
+    setMsg('Running camera-style stress test…', '');
+    startRunTimer('Cam stress', duration_min * 60);
+    startRunStatusPoll();
+    const btn = document.getElementById('btnCamStress');
+    btn.disabled = true;
+    try {
+      const res = await fetch('/api/test/cam-stress', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mount, notes, duration_min, chunk_mib: 16, profile })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setMsg(messageFromApiError(res, data), 'err', { autoHideMs: 14000 });
+        return;
+      }
+      const cls = data.result === 'pass' ? 'ok' : 'err';
+      setMsg('Done: ' + (data.result || '') + ' — ' + (data.summary || '').slice(0, 220), cls, { autoHideMs: 9000 });
+      await loadRuns();
+      await pollCandidates();
+    } catch (e) {
+      setMsg(String(e), 'err', { autoHideMs: 10000 });
+    } finally {
+      stopRunTimer();
+      btn.disabled = false;
+    }
+  });
+
+  document.getElementById('btnStatic').addEventListener('click', async () => {
+    setMsg('Writing offline snapshot…', '');
+    try {
+      const res = await fetch('/api/report/build', { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) { setMsg(JSON.stringify(data), 'err', { autoHideMs: 12000 }); return; }
+      setMsg('Wrote ' + (data.report || 'report.html') + ' (optional; use Print / PDF for a normal report)', 'ok', { autoHideMs: 7000 });
+    } catch (e) {
+      setMsg(String(e), 'err', { autoHideMs: 10000 });
+    }
+  });
+
+  document.getElementById('tableRuns').querySelector('thead').addEventListener('click', (ev) => {
+    const th = ev.target.closest('th[data-sort-key]');
+    if (!th) return;
+    const key = th.dataset.sortKey;
+    if (runSortState.key === key) {
+      runSortState.dir = runSortState.dir === 'asc' ? 'desc' : 'asc';
+    } else {
+      runSortState.key = key;
+      runSortState.dir = 'asc';
+    }
+    updateRunSortHeaders();
+    applyFilter();
+  });
+
+  document.getElementById('tabRunsAll').addEventListener('click', () => setRunsViewTab('all'));
+  document.getElementById('tabRunsById').addEventListener('click', () => setRunsViewTab('byId'));
+
+  document.getElementById('tableCandidates').querySelector('thead').addEventListener('click', (ev) => {
+    const th = ev.target.closest('th[data-sort-key]');
+    if (!th) return;
+    const key = th.dataset.sortKey;
+    if (candSortState.key === key) {
+      candSortState.dir = candSortState.dir === 'asc' ? 'desc' : 'asc';
+    } else {
+      candSortState.key = key;
+      candSortState.dir = 'asc';
+    }
+    updateCandSortHeaders();
+    pollCandidates();
+  });
+
+  updateRunSortHeaders();
+  updateCandSortHeaders();
+  initDemoMode();
+
+  setupTableCopyLikeNetworkAnalyzer();
+  setupDetailPanelCopyLikeNetworkAnalyzer();
+  loadRuns();
+  (async () => {
+    await loadPlatform();
+    await pollCandidates();
+  })();
+  setInterval(() => pollCandidates(), 2800);
+</script>
+</body>
+</html>

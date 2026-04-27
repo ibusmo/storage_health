@@ -1,0 +1,12 @@
+{
+  "folders": [
+    {
+      "name": "Storage Health",
+      "path": "."
+    }
+  ],
+  "settings": {
+    "terminal.integrated.cwd": "${workspaceFolder}",
+    "task.allowAutomaticTasks": "on"
+  }
+}
